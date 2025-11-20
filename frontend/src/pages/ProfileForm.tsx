@@ -23,14 +23,53 @@ export default function ProfileForm() {
 
   const [skillInput, setSkillInput] = useState('');
   const [locationInput, setLocationInput] = useState('');
+  const [editingExpIndex, setEditingExpIndex] = useState<number | null>(null);
+  const [expForm, setExpForm] = useState({
+    company: '',
+    title: '',
+    startDate: '',
+    endDate: '',
+    description: '',
+    highlights: [] as string[]
+  });
+  const [highlightInput, setHighlightInput] = useState('');
 
   useEffect(() => {
-    const parsedResume = localStorage.getItem('parsedResume');
-    if (parsedResume) {
-      const data = JSON.parse(parsedResume);
-      setFormData(prev => ({ ...prev, ...data }));
-      localStorage.removeItem('parsedResume');
-    }
+    const loadProfile = async () => {
+      // First check if we have an existing profile ID
+      const profileId = localStorage.getItem('profileId');
+      if (profileId) {
+        try {
+          const response = await apiClient.getProfile(profileId);
+          if (response.success && response.profile) {
+            setFormData({
+              fullName: response.profile.fullName || '',
+              email: response.profile.email || '',
+              phone: response.profile.phone || '',
+              workExperience: response.profile.workExperience || [],
+              education: response.profile.education || [],
+              skills: response.profile.skills || [],
+              desiredPosition: response.profile.desiredPosition || '',
+              locations: response.profile.locations || [],
+              currentLocation: response.profile.currentLocation || '',
+            });
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to load profile:', err);
+        }
+      }
+
+      // If no existing profile, check for parsed resume data
+      const parsedResume = localStorage.getItem('parsedResume');
+      if (parsedResume) {
+        const data = JSON.parse(parsedResume);
+        setFormData(prev => ({ ...prev, ...data }));
+        localStorage.removeItem('parsedResume');
+      }
+    };
+
+    loadProfile();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -39,10 +78,21 @@ export default function ProfileForm() {
     setError(null);
 
     try {
-      const response = await apiClient.createProfile(formData);
+      const profileId = localStorage.getItem('profileId');
+      let response;
+
+      if (profileId) {
+        // Update existing profile
+        response = await apiClient.updateProfile(profileId, formData);
+      } else {
+        // Create new profile
+        response = await apiClient.createProfile(formData);
+        if (response.success && response.profileId) {
+          localStorage.setItem('profileId', response.profileId);
+        }
+      }
 
       if (response.success) {
-        localStorage.setItem('profileId', response.profileId);
         setSuccess(true);
         setTimeout(() => navigate('/dashboard'), 1500);
       }
@@ -84,6 +134,80 @@ export default function ProfileForm() {
     setFormData(prev => ({
       ...prev,
       locations: prev.locations.filter(l => l !== location)
+    }));
+  };
+
+  const addOrUpdateExperience = () => {
+    if (!expForm.company.trim() || !expForm.title.trim()) {
+      return;
+    }
+
+    if (editingExpIndex !== null) {
+      // Update existing experience
+      setFormData(prev => ({
+        ...prev,
+        workExperience: prev.workExperience.map((exp, idx) =>
+          idx === editingExpIndex ? { ...expForm } : exp
+        )
+      }));
+    } else {
+      // Add new experience
+      setFormData(prev => ({
+        ...prev,
+        workExperience: [...prev.workExperience, { ...expForm }]
+      }));
+    }
+
+    // Reset form
+    setExpForm({
+      company: '',
+      title: '',
+      startDate: '',
+      endDate: '',
+      description: '',
+      highlights: []
+    });
+    setEditingExpIndex(null);
+  };
+
+  const editExperience = (index: number) => {
+    setExpForm(formData.workExperience[index]);
+    setEditingExpIndex(index);
+  };
+
+  const removeExperience = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      workExperience: prev.workExperience.filter((_, idx) => idx !== index)
+    }));
+  };
+
+  const cancelEditExperience = () => {
+    setExpForm({
+      company: '',
+      title: '',
+      startDate: '',
+      endDate: '',
+      description: '',
+      highlights: []
+    });
+    setEditingExpIndex(null);
+  };
+
+  const addHighlight = () => {
+    if (highlightInput.trim() && !expForm.highlights.includes(highlightInput.trim())) {
+      setExpForm(prev => ({
+        ...prev,
+        highlights: [...prev.highlights, highlightInput.trim()]
+      }));
+      setHighlightInput('');
+    }
+  };
+
+  const removeHighlight = (highlight: string) => {
+    setExpForm(prev => ({
+      ...prev,
+      highlights: prev.highlights.filter(h => h !== highlight)
     }));
   };
 
@@ -136,6 +260,217 @@ export default function ProfileForm() {
                 />
               </div>
             </div>
+          </div>
+
+          <div className="card">
+            <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>Work Experience</h2>
+
+            {/* Add/Edit Form */}
+            <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: '#f8f8f8', borderRadius: '8px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '1rem' }}>
+                {editingExpIndex !== null ? 'Edit Experience' : 'Add New Experience'}
+              </h3>
+
+              <div className="grid grid-2">
+                <div className="form-group">
+                  <label className="form-label">Company *</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g., Google"
+                    value={expForm.company}
+                    onChange={e => setExpForm(prev => ({ ...prev, company: e.target.value }))}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Job Title *</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g., Software Engineer"
+                    value={expForm.title}
+                    onChange={e => setExpForm(prev => ({ ...prev, title: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-2">
+                <div className="form-group">
+                  <label className="form-label">Start Date</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g., 2020-01"
+                    value={expForm.startDate}
+                    onChange={e => setExpForm(prev => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">End Date</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g., 2022-05 or Present"
+                    value={expForm.endDate}
+                    onChange={e => setExpForm(prev => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Description</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="Brief description of your role..."
+                  value={expForm.description}
+                  onChange={e => setExpForm(prev => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Highlights/Achievements</label>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="Add a highlight or achievement"
+                    value={highlightInput}
+                    onChange={e => setHighlightInput(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addHighlight())}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={addHighlight}
+                  >
+                    Add
+                  </button>
+                </div>
+
+                <ul style={{ paddingLeft: '1.5rem' }}>
+                  {expForm.highlights.map((highlight, idx) => (
+                    <li key={idx} style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{highlight}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeHighlight(highlight)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: '#dc2626',
+                          fontWeight: 'bold',
+                          fontSize: '1.2rem'
+                        }}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={addOrUpdateExperience}
+                >
+                  {editingExpIndex !== null ? 'Update Experience' : 'Add Experience'}
+                </button>
+                {editingExpIndex !== null && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={cancelEditExperience}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* List of Experiences */}
+            {formData.workExperience.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {formData.workExperience.map((exp, index) => (
+                  <div
+                    key={index}
+                    style={{
+                      padding: '1rem',
+                      backgroundColor: '#f8f8f8',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid #2563eb'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.25rem' }}>
+                          {exp.title}
+                        </h3>
+                        <p style={{ fontSize: '1rem', color: '#2563eb', marginBottom: '0.25rem' }}>
+                          {exp.company}
+                        </p>
+                        <p style={{ fontSize: '0.9rem', color: '#666' }}>
+                          {exp.startDate} - {exp.endDate}
+                        </p>
+
+                        {exp.description && (
+                          <p style={{ marginTop: '0.75rem', color: '#333', lineHeight: '1.6' }}>
+                            {exp.description}
+                          </p>
+                        )}
+
+                        {exp.highlights && exp.highlights.length > 0 && (
+                          <ul style={{
+                            marginTop: '0.75rem',
+                            paddingLeft: '1.5rem',
+                            color: '#333',
+                            lineHeight: '1.6'
+                          }}>
+                            {exp.highlights.map((highlight, hIndex) => (
+                              <li key={hIndex} style={{ marginBottom: '0.25rem' }}>
+                                {highlight}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div className="flex gap-1" style={{ marginLeft: '1rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => editExperience(index)}
+                          style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeExperience(index)}
+                          style={{
+                            background: '#dc2626',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '0.5rem 0.75rem',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem',
+                            fontWeight: '500'
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card">

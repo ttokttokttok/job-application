@@ -5,10 +5,14 @@ export class AGIClient {
   private agiAgentService: AGIAgentService;
   private useMock: boolean;
   private activeSessions: Map<string, string> = new Map(); // taskId -> sessionId
+  private agentName: 'agi-0' | 'agi-0-fast';
 
   constructor() {
     this.agiAgentService = new AGIAgentService();
     this.useMock = process.env.USE_MOCK_AGI === 'true';
+    // Use agi-0-fast by default for web operations to save Claude credits
+    // Can be overridden with AGI_AGENT_NAME env var
+    this.agentName = (process.env.AGI_AGENT_NAME as 'agi-0' | 'agi-0-fast') || 'agi-0-fast';
   }
 
   /**
@@ -31,8 +35,9 @@ export class AGIClient {
       const taskId = `${params.task}_${Date.now()}`;
       
       // Create a new session for this task
+      // Use agi-0-fast by default to save Claude credits for web operations
       const session = await this.agiAgentService.createSession({
-        agent_name: 'agi-0',
+        agent_name: this.agentName,
         save_on_exit: false,
       });
       

@@ -79,18 +79,22 @@ export class AGIAgentService {
     options: CreateSessionRequest = {}
   ): Promise<CreateSessionResponse> {
     if (this.useMock) {
-      return this.mockCreateSession();
+      return this.mockCreateSession(options.agent_name);
     }
+
+    // Default to agi-0-fast if not specified to save Claude credits
+    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0-fast';
+    const agentName = options.agent_name || defaultAgentName;
 
     const response = await this.axiosInstance.post<CreateSessionResponse>(
       '/sessions',
       {
-        agent_name: options.agent_name || 'agi-0',
+        agent_name: agentName,
         save_on_exit: options.save_on_exit ?? false,
       }
     );
 
-    logger.info(`Created AGI session: ${response.data.session_id}`);
+    logger.info(`Created AGI session: ${response.data.session_id} with agent: ${agentName}`);
     return response.data;
   }
 
@@ -365,12 +369,13 @@ export class AGIAgentService {
   }
 
   // Mock implementations for development
-  private mockCreateSession(): CreateSessionResponse {
+  private mockCreateSession(agentName?: AgentName): CreateSessionResponse {
     const sessionId = `mock_session_${Date.now()}`;
+    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0-fast';
     return {
       session_id: sessionId,
       vnc_url: `https://mock-vnc.agi.tech/${sessionId}`,
-      agent_name: 'agi-0',
+      agent_name: agentName || defaultAgentName,
       status: 'ready',
       created_at: new Date().toISOString(),
     };

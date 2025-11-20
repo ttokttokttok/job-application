@@ -64,7 +64,13 @@ Add these to your `.env` file:
 AGI_API_KEY=your_api_key_here
 AGI_API_URL=https://api.agi.tech/v1
 USE_MOCK_AGI=true  # Set to false when ready to use real API
+AGI_AGENT_NAME=agi-0-fast  # Use 'agi-0-fast' (default) to save Claude credits, or 'agi-0' for more capable agent
 ```
+
+**Note on Agent Selection:**
+- `agi-0-fast` (default): Faster and cheaper, perfect for web traversal and API operations. This saves Claude credits.
+- `agi-0`: More capable but uses Claude, better for complex reasoning tasks.
+- For web automation tasks (job search, applying), `agi-0-fast` is recommended to avoid using Claude credits.
 
 ## Usage
 
