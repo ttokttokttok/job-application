@@ -1,11 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { UserProfile, JobApplication, NetworkingContact } from '../types/models';
+import { UserProfile, JobApplication, NetworkingContact, ConversationMessage, ConversationState } from '../types/models';
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const APPLICATIONS_FILE = path.join(DATA_DIR, 'applications.json');
 const CONTACTS_FILE = path.join(DATA_DIR, 'contacts.json');
+const CONVERSATIONS_FILE = path.join(DATA_DIR, 'conversations.json');
+const CONVERSATION_STATES_FILE = path.join(DATA_DIR, 'conversation_states.json');
 
 export class DataStore {
   constructor() {
@@ -22,7 +24,7 @@ export class DataStore {
       await fs.mkdir(DATA_DIR, { recursive: true });
     }
 
-    const files = [PROFILES_FILE, APPLICATIONS_FILE, CONTACTS_FILE];
+    const files = [PROFILES_FILE, APPLICATIONS_FILE, CONTACTS_FILE, CONVERSATIONS_FILE, CONVERSATION_STATES_FILE];
     for (const file of files) {
       try {
         await fs.access(file);
@@ -181,5 +183,48 @@ export class DataStore {
     const contacts = await this.readFile<NetworkingContact>(CONTACTS_FILE);
     const filtered = contacts.filter(c => c.id !== id);
     await this.writeFile(CONTACTS_FILE, filtered);
+  }
+
+  // ============ Conversation Methods ============
+
+  async getConversationMessages(userId: string): Promise<ConversationMessage[]> {
+    const messages = await this.readFile<ConversationMessage>(CONVERSATIONS_FILE);
+    return messages.filter(m => m.userId === userId);
+  }
+
+  async saveConversationMessage(message: ConversationMessage): Promise<void> {
+    const messages = await this.readFile<ConversationMessage>(CONVERSATIONS_FILE);
+    messages.push(message);
+    await this.writeFile(CONVERSATIONS_FILE, messages);
+  }
+
+  async clearConversationMessages(userId: string): Promise<void> {
+    const messages = await this.readFile<ConversationMessage>(CONVERSATIONS_FILE);
+    const filtered = messages.filter(m => m.userId !== userId);
+    await this.writeFile(CONVERSATIONS_FILE, filtered);
+  }
+
+  async getConversationState(userId: string): Promise<ConversationState | null> {
+    const states = await this.readFile<ConversationState>(CONVERSATION_STATES_FILE);
+    return states.find(s => s.userId === userId) || null;
+  }
+
+  async saveConversationState(state: ConversationState): Promise<void> {
+    const states = await this.readFile<ConversationState>(CONVERSATION_STATES_FILE);
+    const index = states.findIndex(s => s.userId === state.userId);
+
+    if (index >= 0) {
+      states[index] = state;
+    } else {
+      states.push(state);
+    }
+
+    await this.writeFile(CONVERSATION_STATES_FILE, states);
+  }
+
+  async deleteConversationState(userId: string): Promise<void> {
+    const states = await this.readFile<ConversationState>(CONVERSATION_STATES_FILE);
+    const filtered = states.filter(s => s.userId !== userId);
+    await this.writeFile(CONVERSATION_STATES_FILE, filtered);
   }
 }

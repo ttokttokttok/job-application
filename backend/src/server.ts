@@ -11,6 +11,8 @@ import resumeRoutes from './routes/resume.routes';
 import profileRoutes from './routes/profile.routes';
 import jobsRoutes from './routes/jobs.routes';
 import networkingRoutes from './routes/networking.routes';
+import agentRoutes from './routes/agent.routes';
+import webhooksRoutes from './routes/webhooks.routes';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,6 +38,8 @@ app.use('/api/resume', resumeRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/jobs', jobsRoutes);
 app.use('/api/networking', networkingRoutes);
+app.use('/api/agent', agentRoutes);
+app.use('/api/webhooks', webhooksRoutes);
 
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {

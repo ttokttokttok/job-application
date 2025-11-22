@@ -75,4 +75,30 @@ export const apiClient = {
     const response = await api.get(`/networking/${applicationId}`);
     return response.data;
   },
+
+  // Agent / Conversation
+  async sendMessage(userId: string, message: string) {
+    const response = await api.post('/agent/message', { userId, message });
+    return response.data;
+  },
+
+  async getConversation(userId: string) {
+    const response = await api.get(`/agent/conversation/${userId}`);
+    return response.data;
+  },
+
+  async clearConversation(userId: string) {
+    const response = await api.delete(`/agent/conversation/${userId}`);
+    return response.data;
+  },
+
+  async initializeConversation(userId: string, profileData: any) {
+    const response = await api.post('/agent/initialize', { userId, profileData });
+    return response.data;
+  },
+
+  async startVoiceCall(userId: string, phoneNumber: string) {
+    const response = await api.post('/agent/voice/call', { userId, phoneNumber });
+    return response.data;
+  },
 };

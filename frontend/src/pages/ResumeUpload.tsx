@@ -56,9 +56,21 @@ export default function ResumeUpload() {
       const response = await apiClient.uploadResume(file);
 
       if (response.success) {
-        // Store parsed data in localStorage to pass to profile form
-        localStorage.setItem('parsedResume', JSON.stringify(response.parsedData));
-        navigate('/profile');
+        // Generate a user ID if not exists
+        let userId = localStorage.getItem('userId');
+        if (!userId) {
+          userId = 'user_' + Date.now();
+          localStorage.setItem('userId', userId);
+        }
+
+        // Store profile data
+        localStorage.setItem('profileData', JSON.stringify(response.parsedData));
+
+        // Initialize conversation with the agent
+        await apiClient.initializeConversation(userId, response.parsedData);
+
+        // Redirect to dashboard
+        navigate('/dashboard');
       }
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to upload resume. Please try again.');

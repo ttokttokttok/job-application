@@ -1367,4 +1367,360 @@ The project now includes a complete implementation of the AGI Agent Sessions API
 
 ---
 
+## IMPLEMENTATION UPDATE - Human-in-the-Loop Conversational Workflow
+
+### Overview of Changes
+
+The application has been updated to implement a fully conversational, human-in-the-loop workflow. Instead of manual button clicks, users now interact with an AI chatbot that guides them through the entire job hunting process with approval points at each critical decision.
+
+### New User Workflow
+
+#### Phase 1: Resume Upload → Direct to Dashboard
+1. User uploads resume (PDF/DOCX)
+2. Backend parses resume using Claude API → extracts structured data
+3. **NEW**: User is redirected directly to Dashboard (not profile form)
+4. **NEW**: Conversation with AI agent is automatically initialized
+5. Dashboard shows AI chatbot interface with applications sidebar
+
+#### Phase 2: Conversational Job Preference Collection
+1. Agent greets user with profile information already loaded
+2. Agent asks for three missing pieces of information via natural conversation:
+   - Desired position (e.g., "software engineer")
+   - Preferred locations (can be multiple, including "Remote")
+   - Current location
+3. User responds in natural language
+4. Agent extracts information using Claude and confirms understanding
+
+#### Phase 3: Automatic Job Search with Human Review
+1. Agent automatically triggers job search when preferences are complete
+2. AGI API navigates to NetworkIn and searches
+3. **NEW**: Agent presents found jobs in chat with full details
+4. **NEW**: User selects which jobs to apply to:
+   - Can say "all of them"
+   - Can specify numbers: "1, 3, and 5"
+   - Can say "none" to search again
+5. Agent confirms selection
+
+#### Phase 4: Cover Letter Review & Approval
+1. **NEW**: Agent generates customized cover letters for selected jobs
+2. **NEW**: Agent shows each cover letter one by one in chat
+3. **NEW**: User reviews and can:
+   - Approve ("looks good", "yes")
+   - Request changes ("make it more enthusiastic")
+   - See next one ("show me the next")
+4. Agent iterates through all cover letters
+5. Once approved, agent submits applications
+
+#### Phase 5: Networking with Human Approval
+1. Agent asks if user wants help with networking
+2. If yes, agent searches for people at target companies
+3. **NEW**: Agent presents list of contacts with details:
+   - Name, title, company
+   - Connection degree (1st, 2nd, 3rd)
+   - Brief description/bio
+4. **NEW**: User selects who to reach out to
+5. **NEW**: Agent drafts personalized messages
+6. **NEW**: User reviews and approves each message before sending
+7. Agent sends approved messages and updates dashboard
+
+#### Phase 6: Continuous Conversation
+1. Applications appear in sidebar as they're created
+2. User can click on applications to view details
+3. User can continue chatting with agent for help
+4. User can manually edit profile via separate page
+
+### New Architecture Components
+
+#### Backend Services
+
+**TelnyxAgentService** (`src/services/telnyxAgent.service.ts`)
+- Integrates with Telnyx API for voice/SMS capabilities
+- Handles voice call sessions (optional feature)
+- Processes voice and SMS webhooks
+- Enables users to talk to the agent or text
+
+**ConversationService** (`src/services/conversation.service.ts`)
+- Orchestrates the entire conversational workflow
+- Manages conversation state machine with 9 stages:
+  1. `profile_collection` - Gather job preferences
+  2. `job_search` - Search for jobs
+  3. `job_review` - User selects jobs to apply to
+  4. `cover_letter_review` - Review and approve cover letters
+  5. `application` - Submit applications
+  6. `networking_search` - Find people at companies
+  7. `networking_review` - User selects contacts
+  8. `networking_message_review` - Review and approve messages
+  9. `complete` - Workflow finished
+- Uses Claude API for natural language understanding
+- Tracks user progress through stages
+- Handles human-in-the-loop approval points
+
+#### New Data Models
+
+```typescript
+interface ConversationMessage {
+  id: string;
+  userId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  metadata?: {
+    type?: 'voice' | 'text';
+    callSid?: string;
+    jobsFound?: any[];
+    coverLetterDraft?: string;
+    contactsFound?: any[];
+    messageDraft?: string;
+    pendingAction?: 'approve_jobs' | 'approve_cover_letter' | 'approve_contacts' | 'approve_messages';
+  };
+}
+
+interface ConversationState {
+  userId: string;
+  stage: string;
+  profileData?: Partial<UserProfile>;
+  selectedJobs?: string[];
+  coverLetterDrafts?: { [jobId: string]: string };
+  approvedCoverLetters?: { [jobId: string]: string };
+  selectedContacts?: { [applicationId: string]: string[] };
+  messageDrafts?: { [contactId: string]: string };
+  approvedMessages?: { [contactId: string]: string };
+  lastUpdated: Date;
+}
+
+interface AGIWebhookEvent {
+  event: 'session.created' | 'task.started' | 'task.completed' | 'task.question' | 'task.error';
+  timestamp: string;
+  session: { id: string; status: string; /* ... */ };
+  message?: string;
+  result?: any;
+  question?: string;
+  error?: string;
+}
+```
+
+#### New API Endpoints
+
+**Agent Conversation**
+- `POST /api/agent/message` - Send message to chatbot
+- `GET /api/agent/conversation/:userId` - Get chat history
+- `DELETE /api/agent/conversation/:userId` - Clear conversation
+- `POST /api/agent/initialize` - Start new conversation
+
+**Voice Integration (Optional)**
+- `POST /api/agent/voice/call` - Initiate voice call with agent
+- `POST /api/agent/voice-webhook` - Telnyx voice event handler
+- `POST /api/agent/sms-webhook` - Telnyx SMS event handler
+
+**Webhooks**
+- `POST /api/webhooks/agi` - AGI task completion webhooks
+- `GET /api/webhooks/agi/:sessionId` - Debug webhook events
+
+#### Data Storage Updates
+
+**New JSON Files** (in `backend/data/`)
+- `conversations.json` - Stores all conversation messages
+- `conversation_states.json` - Stores conversation state per user
+
+**DataStore Methods Added**
+- `getConversationMessages(userId)` - Load chat history
+- `saveConversationMessage(message)` - Store message
+- `clearConversationMessages(userId)` - Clear history
+- `getConversationState(userId)` - Get user's workflow state
+- `saveConversationState(state)` - Update workflow state
+- `deleteConversationState(userId)` - Remove state
+
+### Frontend Changes
+
+#### New Dashboard Component
+
+**NewDashboard.tsx** - Complete redesign with split-pane layout:
+
+**Left Pane: AI Chatbot**
+- Chat message history (user and assistant messages)
+- Real-time message display with timestamps
+- Text input area for user messages
+- Loading indicator when agent is thinking
+- Shows current conversation stage
+- Keyboard shortcuts (Enter to send)
+
+**Right Pane: Applications Sidebar**
+- Live list of submitted applications
+- Shows job title, company, location, status
+- Displays networking contact count per application
+- Click to view application details
+- Auto-updates when new applications are created
+
+**Header**
+- JobAgent branding
+- "Edit Profile" button to manually update profile
+
+#### Updated Resume Upload Flow
+
+**Before:**
+```
+Upload → Parse → Redirect to /profile → Fill form → Redirect to /dashboard
+```
+
+**After:**
+```
+Upload → Parse → Initialize conversation → Redirect to /dashboard
+```
+
+The profile form is skipped, and conversation starts immediately with profile data pre-loaded.
+
+### Integration Points
+
+#### AGI Webhooks
+- AGI sessions can now be created with `webhook_url` parameter
+- Backend URL configured: `${BACKEND_URL}/api/webhooks/agi`
+- When AGI tasks complete, webhook notifies the backend
+- Backend can then notify user via chatbot about task completion
+- Enables async job search with real-time updates
+
+#### Telnyx Integration (Optional)
+- Telnyx API enables voice calls with the agent
+- Users can call a phone number to interact verbally
+- Voice is transcribed and processed like text messages
+- Agent can speak responses back using text-to-speech
+- SMS support for text-based mobile interaction
+- Webhooks configured for call and message events
+
+#### Claude API Usage
+- **Resume Parsing**: Extract structured data from resumes
+- **Cover Letter Generation**: Create tailored cover letters
+- **Natural Language Understanding**: Extract job preferences from chat
+- **Conversational Responses**: Generate natural, helpful agent responses
+- **Context Awareness**: Maintains conversation history for continuity
+
+### Environment Variables
+
+#### New Required Variables
+
+```bash
+# Backend URL (for webhooks)
+BACKEND_URL=http://localhost:3000
+
+# Telnyx API (Optional - for voice/SMS)
+TELNYX_API_KEY=your_telnyx_api_key
+TELNYX_API_URL=https://api.telnyx.com/v2
+TELNYX_AGENT_ID=your_agent_id
+TELNYX_PHONE_NUMBER=+1234567890
+```
+
+#### Updated Variables
+```bash
+# AGI API URL corrected
+AGI_API_URL=https://api.agi.tech/v1
+```
+
+### Human-in-the-Loop Decision Points
+
+The new workflow includes human approval at these critical points:
+
+1. **Job Selection**
+   - Agent finds jobs → presents list → user selects which to apply
+
+2. **Cover Letter Approval**
+   - Agent generates drafts → shows each one → user approves or requests changes
+
+3. **Networking Contact Selection**
+   - Agent finds employees → presents with details → user selects who to contact
+
+4. **Message Approval**
+   - Agent drafts outreach messages → user reviews → user approves before sending
+
+This ensures the user maintains full control while automating the tedious parts.
+
+### File Structure Changes
+
+```
+backend/
+├── src/
+│   ├── services/
+│   │   ├── telnyxAgent.service.ts       # NEW
+│   │   ├── conversation.service.ts      # NEW
+│   │
+│   ├── routes/
+│   │   ├── agent.routes.ts              # NEW
+│   │   ├── webhooks.routes.ts           # NEW
+│   │
+│   ├── types/
+│   │   └── models.ts                    # UPDATED
+│   │
+│   ├── data/
+│   │   └── store.ts                     # UPDATED
+│   │
+│   └── server.ts                        # UPDATED
+│
+├── data/
+│   ├── conversations.json               # NEW
+│   └── conversation_states.json         # NEW
+│
+└── .env.example                         # UPDATED
+
+frontend/
+├── src/
+│   ├── pages/
+│   │   ├── NewDashboard.tsx             # NEW
+│   │   ├── ResumeUpload.tsx             # UPDATED
+│   │
+│   ├── types/
+│   │   └── models.ts                    # UPDATED
+│   │
+│   ├── api/
+│   │   └── client.ts                    # UPDATED
+│   │
+│   └── App.tsx                          # UPDATED
+```
+
+### Testing the New Workflow
+
+1. **Backend Setup**:
+```bash
+cd backend
+npm install
+cp .env.example .env
+# Edit .env with API keys
+npm run dev
+```
+
+2. **Frontend Setup**:
+```bash
+cd frontend
+npm install
+echo "VITE_API_URL=http://localhost:3000/api" > .env
+npm run dev
+```
+
+3. **Test Flow**:
+   - Navigate to http://localhost:5173
+   - Upload a resume
+   - Chat with the agent about job preferences
+   - Review and select jobs
+   - Approve cover letters
+   - Select networking contacts
+   - Approve messages
+
+### Key Benefits
+
+1. **Natural Interaction**: Users communicate in plain English instead of filling forms
+2. **Full Control**: Human approval required at every critical decision
+3. **Transparency**: User sees exactly what the agent is doing
+4. **Flexibility**: Can customize cover letters and messages before sending
+5. **Voice Option**: Can interact via phone call (optional Telnyx integration)
+6. **Real-time Updates**: AGI webhooks enable async task notifications
+7. **Better UX**: All interactions happen in one place (Dashboard)
+
+### Notes for Future Enhancement
+
+1. **Persistent Storage**: Migrate from JSON to PostgreSQL/MongoDB for production
+2. **Authentication**: Add user auth for multi-user support
+3. **WebSockets**: Real-time updates without polling
+4. **Email Integration**: Automated follow-up emails
+5. **Calendar Integration**: Schedule interviews and coffee chats
+6. **Analytics**: Track success rates and optimize messaging
+
+---
+
 End of Specification Document
