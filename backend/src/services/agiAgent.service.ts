@@ -38,7 +38,7 @@ export class AGIAgentService {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
       },
-      timeout: 30000, // 30 second timeout
+      timeout: 60000, // 60 second timeout (increased for slow AGI API responses)
     });
 
     // Add request interceptor for logging

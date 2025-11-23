@@ -137,8 +137,10 @@ export class AGIClient {
             const hasSentMessages = content.includes('sent') || content.includes('message') || content.includes('connect');
             const hasStopped = content.includes('stop') || content.includes('done') || content.includes('complete');
 
-            // Count how many people were contacted
-            const messageCount = (content.match(/sent|message|connect/gi) || []).length;
+            // Count how many people were contacted by looking for the success confirmations
+            // Look for patterns like "✓ Sent message to" or "✓ Sent connection request to"
+            const sentConfirmations = content.match(/✓ sent (message|connection request) to/gi) || [];
+            const messageCount = sentConfirmations.length;
             const hasEnoughMessages = messageCount >= expectedCount;
 
             if (hasSentMessages && (hasStopped || hasEnoughMessages)) {

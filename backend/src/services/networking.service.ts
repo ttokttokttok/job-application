@@ -77,16 +77,8 @@ IMPORTANT: Stay on the filtered search results page. Do NOT click into individua
     console.log(`📤 Reaching out to ${selectedPeople.length} people from the filtered page...`);
 
     // Build clear, step-by-step instructions
-    let instructions = `You are automating LinkedIn-style networking. Filter by company and send ${selectedPeople.length} messages.
+    let instructions = `You are on a LinkedIn-style networking page. Send ${selectedPeople.length} message${selectedPeople.length > 1 ? 's' : ''} to the following people:
 
-STEP 1 - FILTER THE PAGE:
-1. The page is already at https://real-networkin.vercel.app/platform/search/people/
-2. Click the company filter button in the top middle of the page
-3. In the modal that opens, check the box for "${application.company}"
-4. Close the modal
-5. Wait 2 seconds for filtered results to load
-
-STEP 2 - SEND MESSAGES (stay on the filtered page, do NOT click profiles):
 `;
 
     for (let i = 0; i < selectedPeople.length; i++) {
@@ -99,23 +91,21 @@ STEP 2 - SEND MESSAGES (stay on the filtered page, do NOT click profiles):
 
       if (person.connectionDegree === '1st') {
         instructions += `
-${i + 1}. Message ${person.name}:
-   - Locate "${person.name}" on the page
-   - Click the Message button (NOT the person's name)
+${i + 1}. Find "${person.name}" on the page
+   - Click their "Message" button
    - Type: ${messageText}
    - Click Send
-   - Wait 1 second
+   - Say "✓ Sent message to ${person.name}"
 
 `;
       } else {
         instructions += `
-${i + 1}. Connect with ${person.name}:
-   - Locate "${person.name}" on the page
-   - Click the Connect button (NOT the person's name)
-   - Click "Add a note"
+${i + 1}. Find "${person.name}" on the page
+   - Click their "Connect" button
+   - If there's an "Add a note" option, click it
    - Type: ${messageText}
    - Click Send
-   - Wait 1 second
+   - Say "✓ Sent connection request to ${person.name}"
 
 `;
       }
@@ -144,10 +134,7 @@ ${i + 1}. Connect with ${person.name}:
     }
 
     instructions += `
-STEP 3 - FINISH:
-Once you have sent all ${selectedPeople.length} messages, you are DONE.
-Type "DONE - Sent ${selectedPeople.length} messages" and STOP immediately.
-Do NOT navigate anywhere else. Do NOT click any other buttons.`;
+After sending all ${selectedPeople.length} message${selectedPeople.length > 1 ? 's' : ''}, say "DONE" and stop.`;
 
     // Execute EVERYTHING in a single AGI session
     try {
