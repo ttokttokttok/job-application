@@ -77,6 +77,11 @@ export const apiClient = {
     return response.data;
   },
 
+  async startInterviewPractice(applicationId: string, phoneNumber: string) {
+    const response = await api.post(`/jobs/interview-practice/${applicationId}`, { phoneNumber });
+    return response.data;
+  },
+
   // Networking
   async reachOut(applicationId: string, maxContacts: number = 5) {
     const response = await api.post('/networking/reach-out', {

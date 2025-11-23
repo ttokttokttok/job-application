@@ -10,6 +10,7 @@ export default function ApplicationDetails() {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [showCoverLetter, setShowCoverLetter] = useState(false);
+  const [startingInterview, setStartingInterview] = useState(false);
 
   useEffect(() => {
     loadApplication();
@@ -51,6 +52,25 @@ export default function ApplicationDetails() {
     }
   };
 
+  const handleInterviewPractice = async () => {
+    if (!application || !id) return;
+
+    const phoneNumber = prompt('Enter your phone number to start interview practice:\n(Format: +1234567890)');
+    if (!phoneNumber) return;
+
+    setStartingInterview(true);
+    try {
+      const response = await apiClient.startInterviewPractice(id, phoneNumber);
+      if (response.success) {
+        alert(`Interview practice call started! You will receive a call shortly for ${application.jobTitle} at ${application.company}.`);
+      }
+    } catch (err: any) {
+      alert(`Failed to start interview practice: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setStartingInterview(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="loading">
@@ -72,12 +92,21 @@ export default function ApplicationDetails() {
 
   return (
     <div className="container">
-      <button
-        className="btn btn-secondary mb-3"
-        onClick={() => navigate('/dashboard')}
-      >
-        ← Back to Dashboard
-      </button>
+      <div className="flex gap-2 mb-3">
+        <button
+          className="btn btn-secondary"
+          onClick={() => navigate('/dashboard')}
+        >
+          ← Back to Dashboard
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={handleInterviewPractice}
+          disabled={startingInterview}
+        >
+          {startingInterview ? '📞 Starting Call...' : '📞 Practice Interview'}
+        </button>
+      </div>
 
       <div className="card card-white">
         <div className="flex justify-between items-center mb-3">

@@ -50,6 +50,99 @@ export class TelnyxAgentService {
   }
 
   /**
+   * Start an interview practice call with AI assistant
+   *
+   * Uses Telnyx TeXML calls endpoint
+   */
+  async startInterviewPractice(
+    phoneNumber: string,
+    jobContext: { company: string; position: string }
+  ): Promise<{ callSid: string }> {
+    const callId = process.env.TELNYX_CALL_ID || '';
+    const fromNumber = process.env.TELNYX_PHONE_NUMBER || '';
+
+    try {
+      if (!callId) {
+        throw new Error('TELNYX_CALL_ID not configured.');
+      }
+
+      if (!fromNumber) {
+        throw new Error('TELNYX_PHONE_NUMBER not configured');
+      }
+
+      // Clean the job title - remove markdown and numbering
+      const cleanPosition = jobContext.position
+        .replace(/^\d+\.\s*/, '')  // Remove "1. " or "2. " prefix
+        .replace(/\*\*/g, '')       // Remove ** markdown bold
+        .trim();
+
+      logger.info(`Initiating interview practice call to ${phoneNumber} for ${cleanPosition} at ${jobContext.company}`);
+      logger.info(`Using Call ID: ${callId}, From: ${fromNumber}`);
+
+      // Use EXACT format from your curl example
+      const payload = {
+        From: fromNumber,
+        To: phoneNumber,
+        AIAssistantDynamicVariables: {
+          job_context: `${cleanPosition} at ${jobContext.company}`
+        }
+      };
+
+      logger.info(`Request payload:`, JSON.stringify(payload, null, 2));
+      logger.info(`Calling endpoint: ${this.apiUrl}/texml/calls/${callId}`);
+
+      const response = await axios.post(
+        `${this.apiUrl}/texml/calls/${callId}`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      logger.info(`Interview practice call initiated successfully`);
+      logger.info(`Response:`, JSON.stringify(response.data, null, 2));
+
+      return { callSid: response.data.call_control_id || response.data.call_session_id || response.data.id || 'success' };
+    } catch (error: any) {
+      // Log detailed error information
+      logger.error('Telnyx interview practice error - Full details:');
+      logger.error(`Status: ${error.response?.status}`);
+      logger.error(`Status Text: ${error.response?.statusText}`);
+      logger.error(`Error Data: ${JSON.stringify(error.response?.data, null, 2)}`);
+      logger.error(`Error Message: ${error.message}`);
+      logger.error(`Request URL: ${error.config?.url}`);
+      logger.error(`Request Method: ${error.config?.method}`);
+      logger.error(`Full error: ${JSON.stringify(error, null, 2)}`);
+
+      if (error.response?.status === 404) {
+        throw new Error(`TeXML Call not found. URL: ${error.config?.url}. Please verify your TELNYX_CALL_ID (${callId}) is correct.`);
+      }
+
+      // Extract the actual error message
+      const telnyxError = error.response?.data?.errors?.[0];
+      const errorDetail = telnyxError?.detail || error.response?.data?.message || error.message;
+      const errorCode = telnyxError?.code;
+
+      if (error.response?.status === 401) {
+        throw new Error('Telnyx authentication failed. Please check your TELNYX_API_KEY.');
+      }
+
+      if (error.response?.status === 403) {
+        if (errorDetail?.includes('Busy Here')) {
+          throw new Error(`Phone line is busy or unavailable. Error: ${errorDetail}. Make sure you're calling a different number than the "From" number.`);
+        }
+        throw new Error(`Telnyx API error (403): ${errorDetail}${errorCode ? ` (Code: ${errorCode})` : ''}`);
+      }
+
+      const errorMessage = errorDetail || 'Failed to start interview practice call';
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
    * Send a text message via Telnyx
    */
   async sendTextMessage(phoneNumber: string, message: string): Promise<void> {

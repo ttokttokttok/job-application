@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { JobApplicationService } from '../services/jobApplication.service';
+import { TelnyxAgentService } from '../services/telnyxAgent.service';
 import { DataStore } from '../data/store';
 import logger from '../utils/logger';
 
 const router = Router();
 const jobApplicationService = new JobApplicationService();
+const telnyxAgentService = new TelnyxAgentService();
 const dataStore = new DataStore();
 
 /**
@@ -183,6 +185,45 @@ router.post('/apply/:applicationId', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Failed to submit application'
+    });
+  }
+});
+
+/**
+ * POST /api/jobs/interview-practice/:applicationId
+ * Start an AI-powered interview practice call
+ */
+router.post('/interview-practice/:applicationId', async (req: Request, res: Response) => {
+  try {
+    const { applicationId } = req.params;
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'phoneNumber is required'
+      });
+    }
+
+    logger.info(`Starting interview practice call for application: ${applicationId}`);
+
+    const application = await dataStore.getApplication(applicationId);
+
+    const result = await telnyxAgentService.startInterviewPractice(phoneNumber, {
+      company: application.company,
+      position: application.jobTitle
+    });
+
+    return res.json({
+      success: true,
+      callSid: result.callSid,
+      message: `Interview practice call started for ${application.jobTitle} at ${application.company}`
+    });
+  } catch (error: any) {
+    logger.error('Interview practice error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to start interview practice call'
     });
   }
 });
