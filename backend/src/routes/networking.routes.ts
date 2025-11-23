@@ -8,12 +8,12 @@ const networkingService = new NetworkingService();
 const dataStore = new DataStore();
 
 /**
- * POST /api/networking/search-contacts
- * Search for people at company (without messaging)
+ * POST /api/networking/auto-outreach
+ * Automatically find and reach out to people at a company (simplified for demo)
  */
-router.post('/search-contacts', async (req: Request, res: Response) => {
+router.post('/auto-outreach', async (req: Request, res: Response) => {
   try {
-    const { applicationId, maxContacts = 5 } = req.body;
+    const { applicationId, maxContacts = 3 } = req.body;
 
     if (!applicationId) {
       return res.status(400).json({
@@ -22,21 +22,21 @@ router.post('/search-contacts', async (req: Request, res: Response) => {
       });
     }
 
-    logger.info(`Searching for contacts for application: ${applicationId}`);
+    logger.info(`Auto-networking for application: ${applicationId} (max: ${maxContacts} contacts)`);
 
-    const contacts = await networkingService.searchContacts(applicationId, maxContacts);
+    const contacts = await networkingService.findAndReachOutToAll(applicationId, maxContacts);
 
-    logger.info(`Found ${contacts.length} contacts`);
+    logger.info(`Successfully reached out to ${contacts.length} contacts`);
 
     return res.json({
       success: true,
-      contacts
+      contactsReachedOut: contacts
     });
   } catch (error: any) {
-    logger.error('Contact search error:', error);
+    logger.error('Auto-outreach error:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Failed to search for contacts'
+      error: error.message || 'Failed to complete automated outreach'
     });
   }
 });

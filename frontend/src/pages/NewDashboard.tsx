@@ -158,6 +158,9 @@ export default function NewDashboard() {
       case 'search_contacts':
         followUpMessage = 'Please search for contacts';
         break;
+      case 'auto_network':
+        followUpMessage = 'Start automated networking';
+        break;
       default:
         return;
     }

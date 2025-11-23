@@ -115,13 +115,13 @@ export interface ConversationMessage {
     coverLetterDraft?: string; // If presenting cover letter
     contactsFound?: any[]; // If presenting networking contacts
     messageDraft?: string; // If presenting networking message
-    pendingAction?: 'approve_jobs' | 'approve_cover_letter' | 'approve_contacts' | 'approve_messages';
+    pendingAction?: 'approve_jobs' | 'approve_cover_letter' | 'approve_contacts' | 'approve_messages' | 'job_search' | 'generate_cover_letters' | 'fetch_next_job_details' | 'search_contacts' | 'auto_network';
   };
 }
 
 export interface ConversationState {
   userId: string;
-  stage: 'profile_collection' | 'job_search' | 'job_review' | 'cover_letter_review' | 'application' | 'networking_search' | 'networking_review' | 'networking_message_review' | 'complete';
+  stage: 'profile_collection' | 'job_search' | 'job_review' | 'cover_letter_review' | 'application' | 'networking_search' | 'networking_outreach' | 'complete';
   profileData?: Partial<UserProfile>;
   selectedJobs?: string[]; // Job IDs user wants to apply to
   coverLetterDrafts?: { [jobId: string]: string };

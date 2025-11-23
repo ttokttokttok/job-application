@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { exec } from 'child_process';
 import logger from './utils/logger';
 
 // Load environment variables
@@ -73,11 +74,48 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
+// Start server with better error handling
+const server = app.listen(PORT, () => {
   logger.info(`🚀 JobAgent backend server running on port ${PORT}`);
   logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`🤖 Mock AGI mode: ${process.env.USE_MOCK_AGI === 'true' ? 'enabled' : 'disabled'}`);
+});
+
+// Handle port conflicts gracefully
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    logger.error(`Port ${PORT} is already in use. Trying to kill existing process...`);
+    // Try to kill the process using the port
+    exec(`lsof -ti:${PORT} | xargs kill -9`, (error: any) => {
+      if (error) {
+        logger.error(`Failed to kill process on port ${PORT}. Please kill it manually.`);
+        logger.error(`Run: lsof -ti:${PORT} | xargs kill -9`);
+      } else {
+        logger.info(`Killed process on port ${PORT}. Please restart the server.`);
+      }
+      process.exit(1);
+    });
+  } else {
+    logger.error('Server error:', err);
+    process.exit(1);
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
 });
 
 export default app;

@@ -151,11 +151,8 @@ export class ConversationService {
       case 'networking_search':
         ({ response, updatedState, metadata } = await this.handleNetworkingSearch(state, userMessage));
         break;
-      case 'networking_review':
-        ({ response, updatedState, metadata } = await this.handleNetworkingReview(state, userMessage));
-        break;
-      case 'networking_message_review':
-        ({ response, updatedState, metadata } = await this.handleNetworkingMessageReview(state, userMessage));
+      case 'networking_outreach':
+        ({ response, updatedState, metadata } = await this.handleNetworkingOutreach(state, userMessage));
         break;
       default:
         response = "I'm here to help! How can I assist you with your job search?";
@@ -759,19 +756,19 @@ Now, would you like me to reach out to people at these companies to help you get
   }
 
   /**
-   * Handle networking search stage
+   * Handle networking search stage - ask user if they want to network
    */
   private async handleNetworkingSearch(
     state: ConversationState,
     userMessage: string
   ): Promise<{ response: string; updatedState: ConversationState; metadata: any }> {
     if (userMessage.toLowerCase().includes('yes') || userMessage.toLowerCase().includes('sure')) {
-      const response = `Excellent! Let me find people at these companies who might be able to help. This will take a moment...`;
+      const response = `Perfect! I'll automatically find people at these companies and reach out to them for you. This will take a moment...`;
 
       return {
         response,
-        updatedState: { ...state, stage: 'networking_review' },
-        metadata: { pendingAction: 'search_contacts' },
+        updatedState: { ...state, stage: 'networking_outreach' },
+        metadata: { pendingAction: 'auto_network' },
       };
     }
 
@@ -783,9 +780,9 @@ Now, would you like me to reach out to people at these companies to help you get
   }
 
   /**
-   * Handle networking review stage
+   * Handle networking outreach stage - automatically find and message everyone
    */
-  private async handleNetworkingReview(
+  private async handleNetworkingOutreach(
     state: ConversationState,
     userMessage: string
   ): Promise<{ response: string; updatedState: ConversationState; metadata: any }> {
@@ -803,168 +800,46 @@ Now, would you like me to reach out to people at these companies to help you get
         };
       }
 
-      // Search for contacts at each company
-      const allContactsFound: { [applicationId: string]: any[] } = {};
-      let totalContacts = 0;
+      // Automatically find and reach out to people at each company (3 people per company)
+      const allContacts: NetworkingContact[] = [];
 
       for (const application of applications) {
-        logger.info(`Searching for contacts at ${application.company}...`);
-        const contacts = await this.networkingService.searchContacts(application.id, 5);
-        allContactsFound[application.id] = contacts;
-        totalContacts += contacts.length;
+        logger.info(`Auto-networking for ${application.company}...`);
+        const contacts = await this.networkingService.findAndReachOutToAll(application.id, 3);
+        allContacts.push(...contacts);
       }
 
-      // Format the response with all contacts found
-      let responseText = `Great! I found ${totalContacts} people who work at the companies you applied to:\n\n`;
+      // Format response showing all contacts reached out to
+      let responseText = `Perfect! I've automatically found and reached out to ${allContacts.length} people:\n\n`;
 
-      let contactIndex = 1;
-      for (const application of applications) {
-        const contacts = allContactsFound[application.id];
-        if (contacts && contacts.length > 0) {
-          responseText += `**${application.company}:**\n`;
-          for (const contact of contacts) {
-            responseText += `${contactIndex}. ${contact.name} - ${contact.title}\n`;
-            if (contact.description) {
-              responseText += `   ${contact.description}\n`;
-            }
-            responseText += `   Connection: ${contact.connectionDegree}\n\n`;
-            contactIndex++;
-          }
+      // Group by company
+      const contactsByCompany: { [company: string]: NetworkingContact[] } = {};
+      for (const contact of allContacts) {
+        if (!contactsByCompany[contact.company]) {
+          contactsByCompany[contact.company] = [];
         }
+        contactsByCompany[contact.company].push(contact);
       }
 
-      responseText += `\nWould you like me to message:\n- "All" of these contacts\n- Specific ones (e.g., "1, 3, and 5")\n- "None" if you'd prefer not to reach out`;
+      for (const [company, contacts] of Object.entries(contactsByCompany)) {
+        responseText += `**${company}:**\n`;
+        for (const contact of contacts) {
+          responseText += `✓ ${contact.name} - ${contact.title}\n`;
+        }
+        responseText += `\n`;
+      }
+
+      responseText += `All done! Your contacts have been saved and you can check back later to see if anyone responded. Is there anything else I can help you with?`;
 
       return {
         response: responseText,
-        updatedState: { ...state, stage: 'networking_message_review' },
-        metadata: {
-          contactsFound: allContactsFound,
-          pendingAction: 'approve_contacts'
-        },
-      };
-    } catch (error) {
-      logger.error('Error searching for contacts:', error);
-      return {
-        response: "I encountered an error while searching for contacts. Would you like me to try again?",
-        updatedState: state,
-        metadata: {},
-      };
-    }
-  }
-
-  /**
-   * Handle networking message review stage
-   */
-  private async handleNetworkingMessageReview(
-    state: ConversationState,
-    userMessage: string
-  ): Promise<{ response: string; updatedState: ConversationState; metadata: any }> {
-    try {
-      // Get all applications the user submitted
-      const applications = state.selectedJobs
-        ? await Promise.all(state.selectedJobs.map(id => this.dataStore.getApplication(id)))
-        : await this.dataStore.getApplicationsByUser(state.userId);
-
-      // Parse user selection
-      const lowerMessage = userMessage.toLowerCase();
-
-      if (lowerMessage.includes('none')) {
-        return {
-          response: "No problem! Your applications have been submitted. You can always reach out to contacts later if you'd like. Is there anything else I can help you with?",
-          updatedState: { ...state, stage: 'complete' },
-          metadata: {},
-        };
-      }
-
-      // Build a flat list of all contacts with their application IDs
-      const allContacts: { applicationId: string; contact: any; globalIndex: number; appIndex: number }[] = [];
-      let globalContactIndex = 1;
-
-      // Also keep track of contacts per application for proper indexing
-      const contactsByApp: { [applicationId: string]: any[] } = {};
-
-      for (const application of applications) {
-        // Re-search for contacts (or use cached from metadata if available)
-        const contacts = await this.networkingService.searchContacts(application.id, 5);
-        contactsByApp[application.id] = contacts;
-
-        for (let i = 0; i < contacts.length; i++) {
-          allContacts.push({
-            applicationId: application.id,
-            contact: contacts[i],
-            globalIndex: globalContactIndex,
-            appIndex: i // 0-based index within this application's contacts
-          });
-          globalContactIndex++;
-        }
-      }
-
-      let selectedContacts: { applicationId: string; contact: any; globalIndex: number; appIndex: number }[];
-
-      if (lowerMessage.includes('all')) {
-        selectedContacts = allContacts;
-      } else {
-        // Extract numbers from user message
-        const numbers = userMessage.match(/\d+/g);
-        if (!numbers || numbers.length === 0) {
-          return {
-            response: "I didn't quite catch which contacts you'd like to message. Could you please specify? For example: 'all', '1, 3, and 5', or 'none'.",
-            updatedState: state,
-            metadata: {},
-          };
-        }
-
-        const selectedIndexes = numbers.map(n => parseInt(n));
-        selectedContacts = allContacts.filter(c => selectedIndexes.includes(c.globalIndex));
-      }
-
-      if (selectedContacts.length === 0) {
-        return {
-          response: "It looks like none of the contacts you selected are valid. Could you please try again? For example: 'all', '1, 3, and 5', or 'none'.",
-          updatedState: state,
-          metadata: {},
-        };
-      }
-
-      // Group selected contacts by application (with app-specific indexes)
-      const contactsByApplication: { [applicationId: string]: { indexes: number[], people: any[] } } = {};
-      for (const selected of selectedContacts) {
-        if (!contactsByApplication[selected.applicationId]) {
-          contactsByApplication[selected.applicationId] = {
-            indexes: [],
-            people: contactsByApp[selected.applicationId]
-          };
-        }
-        contactsByApplication[selected.applicationId].indexes.push(selected.appIndex);
-      }
-
-      // Reach out to selected contacts for each application
-      let totalMessagesSent = 0;
-      const sentContacts: NetworkingContact[] = [];
-
-      for (const [applicationId, { indexes, people }] of Object.entries(contactsByApplication)) {
-        logger.info(`Reaching out to ${indexes.length} contacts for application ${applicationId}`);
-        const contacts = await this.networkingService.reachOut(applicationId, indexes, people);
-        sentContacts.push(...contacts);
-        totalMessagesSent += contacts.length;
-      }
-
-      const response = `Perfect! I've sent messages to ${totalMessagesSent} contact${totalMessagesSent !== 1 ? 's' : ''}:
-
-${sentContacts.map(c => `✓ ${c.name} at ${c.company}`).join('\n')}
-
-You're all set! I'll keep track of responses and you can check back later to see if anyone replied. Is there anything else I can help you with?`;
-
-      return {
-        response,
         updatedState: { ...state, stage: 'complete' },
-        metadata: { contactsReachedOut: sentContacts },
+        metadata: { contactsReachedOut: allContacts },
       };
     } catch (error) {
-      logger.error('Error in networking message review:', error);
+      logger.error('Error in automated networking:', error);
       return {
-        response: "I encountered an error while sending messages. Would you like me to try again?",
+        response: "I encountered an error while reaching out to contacts. Would you like me to try again?",
         updatedState: state,
         metadata: {},
       };
