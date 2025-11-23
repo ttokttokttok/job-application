@@ -57,6 +57,26 @@ export const apiClient = {
     return response.data;
   },
 
+  async fetchJobDetails(applicationId: string) {
+    const response = await api.post(`/jobs/fetch-job-details/${applicationId}`);
+    return response.data;
+  },
+
+  async generateCoverLetter(applicationId: string, feedback?: string) {
+    const response = await api.post(`/jobs/generate-cover-letter/${applicationId}`, { feedback });
+    return response.data;
+  },
+
+  async approveCoverLetter(applicationId: string) {
+    const response = await api.post(`/jobs/approve-cover-letter/${applicationId}`);
+    return response.data;
+  },
+
+  async submitApplication(applicationId: string) {
+    const response = await api.post(`/jobs/apply/${applicationId}`);
+    return response.data;
+  },
+
   // Networking
   async reachOut(applicationId: string, maxContacts: number = 5) {
     const response = await api.post('/networking/reach-out', {

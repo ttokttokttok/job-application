@@ -87,4 +87,104 @@ router.get('/application/:id', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/jobs/fetch-job-details/:applicationId
+ * Fetch detailed job information for a specific application
+ */
+router.post('/fetch-job-details/:applicationId', async (req: Request, res: Response) => {
+  try {
+    const { applicationId } = req.params;
+
+    logger.info(`Fetching detailed job information for application: ${applicationId}`);
+
+    const result = await jobApplicationService.fetchJobDetails(applicationId);
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (error: any) {
+    logger.error('Fetch job details error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch job details'
+    });
+  }
+});
+
+/**
+ * POST /api/jobs/generate-cover-letter/:applicationId
+ * Generate cover letter for a specific application
+ */
+router.post('/generate-cover-letter/:applicationId', async (req: Request, res: Response) => {
+  try {
+    const { applicationId } = req.params;
+    const { feedback } = req.body; // Optional user feedback for regeneration
+
+    logger.info(`Generating cover letter for application: ${applicationId}`);
+
+    const result = await jobApplicationService.generateCoverLetterForJob(applicationId, feedback);
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (error: any) {
+    logger.error('Generate cover letter error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to generate cover letter'
+    });
+  }
+});
+
+/**
+ * POST /api/jobs/approve-cover-letter/:applicationId
+ * Approve the cover letter for a specific application
+ */
+router.post('/approve-cover-letter/:applicationId', async (req: Request, res: Response) => {
+  try {
+    const { applicationId } = req.params;
+
+    logger.info(`Approving cover letter for application: ${applicationId}`);
+
+    await jobApplicationService.approveCoverLetter(applicationId);
+
+    return res.json({
+      success: true
+    });
+  } catch (error: any) {
+    logger.error('Approve cover letter error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to approve cover letter'
+    });
+  }
+});
+
+/**
+ * POST /api/jobs/apply/:applicationId
+ * Submit the application (after cover letter is approved)
+ */
+router.post('/apply/:applicationId', async (req: Request, res: Response) => {
+  try {
+    const { applicationId } = req.params;
+
+    logger.info(`Submitting application: ${applicationId}`);
+
+    const result = await jobApplicationService.submitApplication(applicationId);
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (error: any) {
+    logger.error('Submit application error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to submit application'
+    });
+  }
+});
+
 export default router;

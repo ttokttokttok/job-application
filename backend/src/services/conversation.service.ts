@@ -64,6 +64,33 @@ export class ConversationService {
   }
 
   /**
+   * Extract JSON object from a response that may contain explanatory text
+   * Handles cases where JSON is wrapped in markdown code blocks or has text before/after
+   */
+  private extractJSON(response: string): any | null {
+    try {
+      // First, try to find JSON in markdown code blocks
+      const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (codeBlockMatch) {
+        return JSON.parse(codeBlockMatch[1].trim());
+      }
+
+      // Try to find a JSON object in the response (look for { ... })
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0].trim());
+      }
+
+      // Try parsing the entire response after removing markdown code blocks
+      const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch (e) {
+      logger.warn('Failed to extract JSON from response:', e);
+      return null;
+    }
+  }
+
+  /**
    * Initialize a new conversation for a user
    */
   async initializeConversation(userId: string, profileData: Partial<UserProfile>): Promise<ConversationState> {
@@ -188,6 +215,8 @@ Current profile data:
 
 Extract any of the following that you can identify from the user's message: ${missingFields.join(', ')}.
 
+IMPORTANT: Return ONLY valid JSON, no explanatory text before or after. Just the JSON object.
+
 Return JSON with only the fields you can extract:
 {
   ${!hasDesiredPositionBefore ? '"desiredPosition": "job type/role (accept broad answers like engineer, designer, manager)"' : ''}
@@ -200,46 +229,52 @@ Examples:
 - "San Francisco" → {"locations": ["San Francisco"]} or {"currentLocation": "San Francisco"} depending on context
 - "SF and Remote" → {"locations": ["San Francisco", "Remote"]}
 
-If you cannot extract a field, do not include it in the response.`;
+If you cannot extract a field, do not include it in the response. Return ONLY the JSON object, nothing else.`;
 
       try {
         const extractionResponse = await this.generateLLMResponse(extractionPrompt, 200);
         logger.info(`Extraction response: ${extractionResponse}`);
-        const extracted = JSON.parse(extractionResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        const extracted = this.extractJSON(extractionResponse);
+        
+        if (!extracted) {
+          logger.warn('Could not extract JSON from response');
+          // Continue without extracting - will ask user again if needed
+        } else {
 
-        if (extracted.desiredPosition && !hasDesiredPositionBefore) {
-          profile.desiredPosition = extracted.desiredPosition;
-          logger.info(`✓ Extracted desiredPosition: ${extracted.desiredPosition}`);
-        }
-        if (extracted.locations && Array.isArray(extracted.locations) && !hasLocationsBefore) {
-          profile.locations = extracted.locations;
-          logger.info(`✓ Extracted locations: ${JSON.stringify(extracted.locations)}`);
-        }
-        if (extracted.currentLocation && !hasCurrentLocationBefore) {
-          profile.currentLocation = extracted.currentLocation;
-          logger.info(`✓ Extracted currentLocation: ${extracted.currentLocation}`);
-        }
+          if (extracted.desiredPosition && !hasDesiredPositionBefore) {
+            profile.desiredPosition = extracted.desiredPosition;
+            logger.info(`✓ Extracted desiredPosition: ${extracted.desiredPosition}`);
+          }
+          if (extracted.locations && Array.isArray(extracted.locations) && !hasLocationsBefore) {
+            profile.locations = extracted.locations;
+            logger.info(`✓ Extracted locations: ${JSON.stringify(extracted.locations)}`);
+          }
+          if (extracted.currentLocation && !hasCurrentLocationBefore) {
+            profile.currentLocation = extracted.currentLocation;
+            logger.info(`✓ Extracted currentLocation: ${extracted.currentLocation}`);
+          }
 
-        // Save updated profile to profiles.json immediately if we extracted anything
-        if (state.userId && (extracted.desiredPosition || extracted.locations || extracted.currentLocation)) {
-          const existingProfile = await this.dataStore.getProfile(state.userId).catch(() => null);
-          const profileToSave = {
-            ...existingProfile,
-            id: state.userId,
-            fullName: profile.fullName || existingProfile?.fullName || '',
-            email: profile.email || existingProfile?.email || '',
-            phone: profile.phone || existingProfile?.phone || '',
-            workExperience: profile.workExperience || existingProfile?.workExperience || [],
-            education: profile.education || existingProfile?.education || [],
-            skills: profile.skills || existingProfile?.skills || [],
-            desiredPosition: profile.desiredPosition || existingProfile?.desiredPosition || '',
-            locations: profile.locations || existingProfile?.locations || [],
-            currentLocation: profile.currentLocation || existingProfile?.currentLocation || '',
-            createdAt: existingProfile?.createdAt || new Date(),
-            updatedAt: new Date(),
-          };
-          await this.dataStore.saveProfile(profileToSave);
-          logger.info(`Updated profile in profiles.json with new preferences`);
+          // Save updated profile to profiles.json immediately if we extracted anything
+          if (state.userId && (extracted.desiredPosition || extracted.locations || extracted.currentLocation)) {
+            const existingProfile = await this.dataStore.getProfile(state.userId).catch(() => null);
+            const profileToSave = {
+              ...existingProfile,
+              id: state.userId,
+              fullName: profile.fullName || existingProfile?.fullName || '',
+              email: profile.email || existingProfile?.email || '',
+              phone: profile.phone || existingProfile?.phone || '',
+              workExperience: profile.workExperience || existingProfile?.workExperience || [],
+              education: profile.education || existingProfile?.education || [],
+              skills: profile.skills || existingProfile?.skills || [],
+              desiredPosition: profile.desiredPosition || existingProfile?.desiredPosition || '',
+              locations: profile.locations || existingProfile?.locations || [],
+              currentLocation: profile.currentLocation || existingProfile?.currentLocation || '',
+              createdAt: existingProfile?.createdAt || new Date(),
+              updatedAt: new Date(),
+            };
+            await this.dataStore.saveProfile(profileToSave);
+            logger.info(`Updated profile in profiles.json with new preferences`);
+          }
         }
       } catch (e) {
         logger.warn('Failed to extract profile data from message:', e);
@@ -447,42 +482,259 @@ Which of these positions would you like to apply to? You can say "all of them", 
 
   /**
    * Handle cover letter review stage
+   * New workflow: Process jobs one at a time with detailed info and user approval
    */
   private async handleCoverLetterReview(
     state: ConversationState,
     userMessage: string
   ): Promise<{ response: string; updatedState: ConversationState; metadata: any }> {
-    // Generate cover letters for selected jobs
-    const coverLetterDrafts: { [jobId: string]: string } = {};
+    const selectedJobs = state.selectedJobs || [];
 
-    for (const jobId of state.selectedJobs || []) {
-      const application = await this.dataStore.getApplication(jobId);
-      const profile = await this.dataStore.getProfile(state.userId);
-
-      const coverLetter = await this.coverLetterService.generateCoverLetter(profile, {
-        title: application.jobTitle,
-        company: application.company,
-        description: application.jobDescription,
-        requirements: application.requirements,
-      });
-
-      coverLetterDrafts[jobId] = coverLetter;
+    if (selectedJobs.length === 0) {
+      return {
+        response: "All applications have been completed! Great work. Would you like me to help you network with people at these companies?",
+        updatedState: { ...state, stage: 'networking_search' },
+        metadata: {},
+      };
     }
 
-    const applications = await Promise.all(
-      (state.selectedJobs || []).map(id => this.dataStore.getApplication(id))
-    );
+    // Initialize current job index if not set
+    if (!state.coverLetterDrafts) {
+      state.coverLetterDrafts = {};
+    }
 
-    const response = `I've prepared cover letters for your applications. Here's the first one for **${applications[0].jobTitle}** at ${applications[0].company}:\n\n---\n${coverLetterDrafts[applications[0].id]}\n---\n\nWhat do you think? Would you like me to:\n1. Use this for all applications\n2. Customize it\n3. Show me the next one`;
+    // Determine current job index
+    const approvedCount = Object.keys(state.approvedCoverLetters || {}).length;
+    const currentJobIndex = approvedCount;
 
-    return {
-      response,
-      updatedState: { ...state, coverLetterDrafts },
-      metadata: {
-        coverLetterDraft: coverLetterDrafts[applications[0].id],
-        pendingAction: 'approve_cover_letter'
-      },
-    };
+    if (currentJobIndex >= selectedJobs.length) {
+      // All jobs processed
+      return {
+        response: `Excellent! I've submitted all ${selectedJobs.length} applications.
+
+Now, would you like me to reach out to people at these companies to help you get referrals and schedule coffee chats?`,
+        updatedState: { ...state, stage: 'networking_search' },
+        metadata: {},
+      };
+    }
+
+    const currentJobId = selectedJobs[currentJobIndex];
+    const isFirstMessage = !state.coverLetterDrafts[currentJobId];
+
+    // Handle user response to previous cover letter
+    if (!isFirstMessage && userMessage) {
+      const lowerMessage = userMessage.toLowerCase();
+
+      // Check if user approved the cover letter
+      if (lowerMessage.includes('approve') || lowerMessage.includes('looks good') ||
+          lowerMessage.includes('submit') || lowerMessage.includes('yes') || lowerMessage.includes('perfect')) {
+
+        logger.info(`User approved cover letter for job ${currentJobId}`);
+
+        // Approve and submit the application
+        try {
+          await this.jobService.approveCoverLetter(currentJobId);
+          await this.jobService.submitApplication(currentJobId);
+
+          const application = await this.dataStore.getApplication(currentJobId);
+
+          // Mark as approved
+          const updatedApprovedLetters = { ...(state.approvedCoverLetters || {}) };
+          updatedApprovedLetters[currentJobId] = state.coverLetterDrafts[currentJobId];
+
+          // Move to next job - automatically fetch details and generate cover letter
+          const nextIndex = currentJobIndex + 1;
+          if (nextIndex < selectedJobs.length) {
+            const nextJobId = selectedJobs[nextIndex];
+
+            // Automatically start processing the next job
+            try {
+              logger.info(`Auto-processing next job ${nextIndex + 1} of ${selectedJobs.length}: ${nextJobId}`);
+
+              // Fetch detailed job information
+              const jobDetailsResult = await this.jobService.fetchJobDetails(nextJobId);
+              const nextApplication = jobDetailsResult.application;
+
+              // Generate cover letter with detailed info
+              const coverLetterResult = await this.jobService.generateCoverLetterForJob(nextJobId);
+
+              const response = `✅ Application submitted for ${application.jobTitle} at ${application.company}!
+
+**Job ${nextIndex + 1} of ${selectedJobs.length}: ${nextApplication.jobTitle} at ${nextApplication.company}**
+
+${nextApplication.location}${nextApplication.salary ? ` | ${nextApplication.salary}` : ''}
+
+I've analyzed the full job description and created a personalized cover letter. Here it is:
+
+---
+${coverLetterResult.coverLetter}
+---
+
+What would you like to do?
+- Reply "Approve" or "Looks good" to submit this application
+- Give me feedback to revise it (e.g., "make it more enthusiastic" or "focus more on my Python experience")
+- Reply "Skip" to move to the next job`;
+
+              return {
+                response,
+                updatedState: {
+                  ...state,
+                  approvedCoverLetters: updatedApprovedLetters,
+                  coverLetterDrafts: { [nextJobId]: coverLetterResult.coverLetter }
+                },
+                metadata: {
+                  currentApplication: nextApplication,
+                  coverLetterDraft: coverLetterResult.coverLetter,
+                  pendingAction: 'approve_cover_letter'
+                },
+              };
+            } catch (error) {
+              logger.error('Error auto-processing next job:', error);
+              return {
+                response: `✅ Application submitted for ${application.jobTitle} at ${application.company}!
+
+I encountered an error while processing the next job. Would you like me to try again?`,
+                updatedState: {
+                  ...state,
+                  approvedCoverLetters: updatedApprovedLetters,
+                },
+                metadata: {},
+              };
+            }
+          } else {
+            return {
+              response: `✅ Application submitted for ${application.jobTitle} at ${application.company}!
+
+All ${selectedJobs.length} applications have been submitted successfully!
+
+Would you like me to help you network with people at these companies?`,
+              updatedState: {
+                ...state,
+                approvedCoverLetters: updatedApprovedLetters,
+                stage: 'networking_search'
+              },
+              metadata: {},
+            };
+          }
+        } catch (error) {
+          logger.error('Error submitting application:', error);
+          return {
+            response: `Sorry, I encountered an error while submitting the application. Please try again.`,
+            updatedState: state,
+            metadata: {},
+          };
+        }
+      }
+      // Check if user wants to regenerate with feedback
+      else if (lowerMessage.includes('change') || lowerMessage.includes('revise') ||
+               lowerMessage.includes('different') || lowerMessage.includes('regenerate') ||
+               (!lowerMessage.includes('skip') && !lowerMessage.includes('next'))) {
+
+        logger.info(`User requested cover letter regeneration with feedback: ${userMessage}`);
+
+        // Regenerate cover letter with user feedback
+        try {
+          const result = await this.jobService.generateCoverLetterForJob(currentJobId, userMessage);
+
+          return {
+            response: `I've revised the cover letter based on your feedback. Here it is:
+
+---
+${result.coverLetter}
+---
+
+What do you think now? Reply with:
+- "Approve" or "Looks good" to submit this application
+- Give me more feedback to revise it again
+- "Skip" to move to the next job`,
+            updatedState: {
+              ...state,
+              coverLetterDrafts: { ...state.coverLetterDrafts, [currentJobId]: result.coverLetter }
+            },
+            metadata: {
+              currentApplication: result.application,
+              coverLetterDraft: result.coverLetter,
+              pendingAction: 'approve_cover_letter'
+            },
+          };
+        } catch (error) {
+          logger.error('Error regenerating cover letter:', error);
+          return {
+            response: `Sorry, I encountered an error while regenerating the cover letter. Please try again.`,
+            updatedState: state,
+            metadata: {},
+          };
+        }
+      }
+      // User wants to skip this job
+      else if (lowerMessage.includes('skip') || lowerMessage.includes('next')) {
+        const nextIndex = currentJobIndex + 1;
+        if (nextIndex < selectedJobs.length) {
+          return {
+            response: `Okay, skipping this one. Let me work on the next application (${nextIndex + 1} of ${selectedJobs.length})...`,
+            updatedState: {
+              ...state,
+              selectedJobs: selectedJobs.filter(id => id !== currentJobId), // Remove from list
+              coverLetterDrafts: {} // Reset drafts
+            },
+            metadata: { pendingAction: 'fetch_next_job_details' },
+          };
+        } else {
+          return {
+            response: `That was the last job. Would you like me to help you network with people at the companies you applied to?`,
+            updatedState: { ...state, stage: 'networking_search' },
+            metadata: {},
+          };
+        }
+      }
+    }
+
+    // Generate cover letter for current job
+    try {
+      logger.info(`Processing job ${currentJobIndex + 1} of ${selectedJobs.length}: ${currentJobId}`);
+
+      // Fetch detailed job information
+      const jobDetailsResult = await this.jobService.fetchJobDetails(currentJobId);
+      const application = jobDetailsResult.application;
+
+      // Generate cover letter with detailed info
+      const coverLetterResult = await this.jobService.generateCoverLetterForJob(currentJobId);
+
+      const response = `**Job ${currentJobIndex + 1} of ${selectedJobs.length}: ${application.jobTitle} at ${application.company}**
+
+${application.location}${application.salary ? ` | ${application.salary}` : ''}
+
+I've analyzed the full job description and created a personalized cover letter. Here it is:
+
+---
+${coverLetterResult.coverLetter}
+---
+
+What would you like to do?
+- Reply "Approve" or "Looks good" to submit this application
+- Give me feedback to revise it (e.g., "make it more enthusiastic" or "focus more on my Python experience")
+- Reply "Skip" to move to the next job`;
+
+      return {
+        response,
+        updatedState: {
+          ...state,
+          coverLetterDrafts: { ...state.coverLetterDrafts, [currentJobId]: coverLetterResult.coverLetter }
+        },
+        metadata: {
+          currentApplication: application,
+          coverLetterDraft: coverLetterResult.coverLetter,
+          pendingAction: 'approve_cover_letter'
+        },
+      };
+    } catch (error) {
+      logger.error('Error in cover letter review:', error);
+      return {
+        response: `Sorry, I encountered an error while processing this job. Would you like me to skip it and move to the next one?`,
+        updatedState: state,
+        metadata: {},
+      };
+    }
   }
 
   /**

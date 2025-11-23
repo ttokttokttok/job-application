@@ -39,9 +39,19 @@ export interface JobApplication {
   location: string;
   jobUrl: string;
   jobDescription: string;
-  requirements: string[];
+  detailedDescription?: string;
+  requirements?: string[];
+  responsibilities?: string[];
+  skills?: string[];
+  salary?: string;
   coverLetter: string;
-  status: 'applied' | 'interviewing' | 'rejected' | 'accepted';
+  coverLetterStatus?: 'pending' | 'approved' | 'rejected';
+  coverLetterHistory?: Array<{
+    letter: string;
+    feedback?: string;
+    timestamp: Date;
+  }>;
+  status: 'pending' | 'applied' | 'interviewing' | 'rejected' | 'accepted';
   appliedAt: Date;
   networkingContacts: NetworkingContact[];
 }

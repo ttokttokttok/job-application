@@ -207,13 +207,16 @@ export class AGIAgentService {
   async waitForCompletion(
     sessionId: string,
     timeout: number = 300000, // 5 minutes default
-    pollInterval: number = 2000 // 2 seconds
+    pollInterval: number = 2000, // 2 seconds
+    contentCheckCallback?: (messages: Message[]) => boolean // Optional callback to check if we have enough content
   ): Promise<{ status: SessionStatus; executionStatus: ExecutionStatus; messages: Message[] }> {
     const startTime = Date.now();
     let afterId = 0;
     const allMessages: Message[] = [];
     let lastDoneMessageTime = 0;
-    const doneMessageWaitTime = 5000; // Wait 5 seconds after last DONE message
+    let lastNewMessageTime = Date.now();
+    const doneMessageWaitTime = 3000; // Wait 3 seconds after last DONE message
+    const noNewMessageTimeout = 10000; // If no new messages for 10 seconds after getting content, consider complete
 
     while (Date.now() - startTime < timeout) {
       const status = await this.getSessionStatus(sessionId);
@@ -226,6 +229,7 @@ export class AGIAgentService {
           ...messagesResponse.messages.map((m) => m.id),
           afterId
         );
+        lastNewMessageTime = Date.now();
 
         // Check if we got a DONE message
         const hasDoneMessage = messagesResponse.messages.some(m => m.type === 'DONE');
@@ -259,10 +263,31 @@ export class AGIAgentService {
         };
       }
 
+      // If we have a content check callback and it returns true, and no new messages for a while
+      if (contentCheckCallback && allMessages.length > 0) {
+        if (contentCheckCallback(allMessages)) {
+          const timeSinceLastMessage = Date.now() - lastNewMessageTime;
+          if (timeSinceLastMessage > noNewMessageTimeout) {
+            logger.info(`Session ${sessionId} considered complete - content check passed and no new messages for ${timeSinceLastMessage}ms`);
+            return {
+              status: 'completed',
+              executionStatus: 'finished',
+              messages: allMessages,
+            };
+          }
+        }
+      }
+
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
-    throw new Error(`Timeout waiting for session ${sessionId} to complete`);
+    // Return whatever messages we have instead of throwing an error
+    logger.warn(`Timeout waiting for session ${sessionId}, returning ${allMessages.length} messages collected`);
+    return {
+      status: 'completed',
+      executionStatus: 'finished',
+      messages: allMessages,
+    };
   }
 
   /**

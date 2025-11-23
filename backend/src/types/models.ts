@@ -50,11 +50,23 @@ export interface JobApplication {
   company: string;
   location: string;
   jobUrl: string; // NetworkIn job URL
-  jobDescription: string;
-  requirements: string[];
+  jobDescription: string; // Brief description from search results
+
+  // Detailed job info (scraped from individual job page)
+  detailedDescription?: string; // Full "About the job" section
+  requirements?: string[]; // Required qualifications
+  responsibilities?: string[]; // Key responsibilities
+  skills?: string[]; // Required/preferred skills
+  salary?: string; // Salary range if available
 
   // Application Materials (generated)
   coverLetter: string;
+  coverLetterStatus?: 'pending' | 'approved' | 'rejected'; // User approval status
+  coverLetterHistory?: Array<{ // Track previous drafts
+    letter: string;
+    feedback?: string;
+    timestamp: Date;
+  }>;
 
   // Application Status
   status: 'pending' | 'applied' | 'interviewing' | 'rejected' | 'accepted';

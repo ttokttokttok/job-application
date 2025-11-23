@@ -101,11 +101,35 @@ export class AGIClient {
           params.url
         );
 
+        // Create content check callback based on task type
+        let contentCheckCallback: ((messages: any[]) => boolean) | undefined;
+
+        if (params.task === 'apply_to_job') {
+          // For job applications, check if agent indicates completion
+          contentCheckCallback = (messages) => {
+            const content = messages
+              .filter(m => m.type === 'DONE' || m.type === 'THOUGHT')
+              .map(m => m.content)
+              .join('\n')
+              .toLowerCase();
+
+            // Check for completion indicators
+            const hasSubmitted = content.includes('submit') || content.includes('application sent');
+            const hasStopped = content.includes('stop') || content.includes('done') || content.includes('complete');
+
+            if (hasSubmitted && hasStopped) {
+              logger.info('Application submission content check passed');
+            }
+            return hasSubmitted && hasStopped;
+          };
+        }
+
         // Wait for completion and collect messages
         const result = await this.agiAgentService.waitForCompletion(
           session.session_id,
           300000, // 5 minute timeout
-          2000 // 2 second poll interval
+          2000, // 2 second poll interval
+          contentCheckCallback
         );
 
         // Parse messages to extract results based on task type
@@ -214,6 +238,209 @@ export class AGIClient {
           })),
         };
     }
+  }
+
+  /**
+   * Get detailed job information from a job page
+   * Scrapes the full job description, requirements, responsibilities, and skills
+   */
+  async getJobDetails(jobUrl: string): Promise<{
+    detailedDescription: string;
+    requirements: string[];
+    responsibilities: string[];
+    skills: string[];
+  } | null> {
+    if (this.useMock) {
+      return this.mockGetJobDetails();
+    }
+
+    try {
+      const session = await this.agiAgentService.createSession({
+        agent_name: this.agentName,
+        save_on_exit: false,
+      });
+
+      logger.info(`Created session ${session.session_id} to scrape job details from ${jobUrl}`);
+
+      try {
+        // Navigate to the job page
+        await this.agiAgentService.navigate(session.session_id, jobUrl);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Send message to extract job details
+        await this.agiAgentService.sendMessage(
+          session.session_id,
+          `Extract all the key information from this job posting. I need you to identify and list:
+
+1. **About the Job**: The full detailed description of what this job is about
+2. **Requirements**: All the required qualifications (education, experience, certifications, etc.)
+3. **Responsibilities**: The key responsibilities and duties for this role
+4. **Skills**: All technical and soft skills mentioned (programming languages, tools, methodologies, etc.)
+
+Please format your response EXACTLY like this:
+
+ABOUT THE JOB:
+[Full detailed description here]
+
+REQUIREMENTS:
+- [Requirement 1]
+- [Requirement 2]
+- [etc...]
+
+RESPONSIBILITIES:
+- [Responsibility 1]
+- [Responsibility 2]
+- [etc...]
+
+SKILLS:
+- [Skill 1]
+- [Skill 2]
+- [etc...]
+
+Be thorough and extract ALL information you can find. After you list everything, STOP - do not click anything else.`,
+          jobUrl
+        );
+
+        // Wait for completion with content check callback
+        const result = await this.agiAgentService.waitForCompletion(
+          session.session_id,
+          180000, // 3 minute timeout
+          2000, // 2 second poll interval
+          (messages) => {
+            // Check if we have received job details in the messages
+            const content = messages
+              .filter(m => m.type === 'DONE' || m.type === 'THOUGHT')
+              .map(m => m.content)
+              .join('\n');
+
+            // Check if content contains all required sections
+            const hasAbout = /ABOUT THE JOB:/i.test(content);
+            const hasRequirements = /REQUIREMENTS:/i.test(content);
+            const hasResponsibilities = /RESPONSIBILITIES:/i.test(content);
+            const hasSkills = /SKILLS:/i.test(content);
+
+            const hasAllSections = hasAbout && hasRequirements && hasResponsibilities && hasSkills;
+            if (hasAllSections) {
+              logger.info('Job details content check passed - all sections found');
+            }
+            return hasAllSections;
+          }
+        );
+
+        // Parse the extracted information
+        const details = this.parseJobDetails(result.messages);
+
+        // Clean up session
+        await this.agiAgentService.deleteSession(session.session_id);
+
+        return details;
+      } catch (error) {
+        // Clean up session on error
+        try {
+          await this.agiAgentService.deleteSession(session.session_id);
+        } catch (cleanupError) {
+          logger.error('Error cleaning up session:', cleanupError);
+        }
+        throw error;
+      }
+    } catch (error) {
+      logger.error('Error getting job details:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Parse job details from agent messages
+   * Looks at ALL messages (DONE, THOUGHT) to find the structured information
+   */
+  private parseJobDetails(messages: any[]): {
+    detailedDescription: string;
+    requirements: string[];
+    responsibilities: string[];
+    skills: string[];
+  } | null {
+    try {
+      // Look at DONE and THOUGHT messages - the agent may put info in either
+      const relevantMessages = messages.filter(m => m.type === 'DONE' || m.type === 'THOUGHT');
+
+      if (relevantMessages.length === 0) {
+        logger.warn('No relevant messages found when parsing job details');
+        return null;
+      }
+
+      const content = relevantMessages.map(m => m.content).join('\n\n');
+      logger.info(`Parsing job details from ${relevantMessages.length} messages (${content.length} chars)`);
+
+      // Extract sections using regex (case-insensitive)
+      const aboutMatch = content.match(/ABOUT THE JOB:\s*([\s\S]*?)(?=REQUIREMENTS:|RESPONSIBILITIES:|SKILLS:|$)/i);
+      const reqMatch = content.match(/REQUIREMENTS:\s*([\s\S]*?)(?=RESPONSIBILITIES:|SKILLS:|$)/i);
+      const respMatch = content.match(/RESPONSIBILITIES:\s*([\s\S]*?)(?=SKILLS:|REQUIREMENTS:|$)/i);
+      const skillsMatch = content.match(/SKILLS:\s*([\s\S]*?)(?=REQUIREMENTS:|RESPONSIBILITIES:|$)/i);
+
+      const detailedDescription = aboutMatch ? aboutMatch[1].trim() : '';
+
+      // Parse bullet points - handle both "-" and "•" bullets
+      const parseBullets = (text: string) => {
+        return text
+          .split('\n')
+          .filter(line => {
+            const trimmed = line.trim();
+            return trimmed.startsWith('-') || trimmed.startsWith('•') || trimmed.match(/^\d+\./);
+          })
+          .map(line => line.replace(/^[-•]\s*/, '').replace(/^\d+\.\s*/, '').trim())
+          .filter(line => line.length > 0);
+      };
+
+      const requirements = reqMatch ? parseBullets(reqMatch[1]) : [];
+      const responsibilities = respMatch ? parseBullets(respMatch[1]) : [];
+      const skills = skillsMatch ? parseBullets(skillsMatch[1]) : [];
+
+      logger.info(`Extracted job details: ${requirements.length} requirements, ${responsibilities.length} responsibilities, ${skills.length} skills`);
+
+      // Return result even if some sections are empty
+      return {
+        detailedDescription,
+        requirements,
+        responsibilities,
+        skills
+      };
+    } catch (error) {
+      logger.error('Error parsing job details:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Mock job details for development
+   */
+  private mockGetJobDetails(): {
+    detailedDescription: string;
+    requirements: string[];
+    responsibilities: string[];
+    skills: string[];
+  } {
+    return {
+      detailedDescription: "We're looking for a talented engineer to join our team and help build the future of AI. You'll work on cutting-edge technology and collaborate with world-class researchers and engineers.",
+      requirements: [
+        "Bachelor's degree in Computer Science or related field",
+        "5+ years of professional software development experience",
+        "Strong understanding of algorithms and data structures",
+        "Experience with distributed systems"
+      ],
+      responsibilities: [
+        "Design and implement scalable backend services",
+        "Collaborate with cross-functional teams",
+        "Write clean, maintainable code",
+        "Participate in code reviews and technical discussions"
+      ],
+      skills: [
+        "Python",
+        "Go or Rust",
+        "Distributed Systems",
+        "Cloud platforms (AWS, GCP)",
+        "Docker and Kubernetes"
+      ]
+    };
   }
 
   /**
