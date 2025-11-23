@@ -182,12 +182,34 @@ router.post('/initialize', async (req: Request, res: Response) => {
       });
     }
 
+    // Save the initial profile data to profiles.json
+    if (profileData) {
+      const profile = {
+        id: userId,
+        fullName: profileData.fullName || '',
+        email: profileData.email || '',
+        phone: profileData.phone || '',
+        workExperience: profileData.workExperience || [],
+        education: profileData.education || [],
+        skills: profileData.skills || [],
+        desiredPosition: profileData.desiredPosition || '',
+        locations: profileData.locations || [],
+        currentLocation: profileData.currentLocation || '',
+        resumeUrl: profileData.resumeUrl,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await dataStore.saveProfile(profile);
+      logger.info(`Saved profile for user ${userId} to profiles.json`);
+    }
+
     const state = await conversationService.initializeConversation(userId, profileData || {});
 
     // Generate initial greeting
-    const greeting = `Hi! I've received your resume and extracted your information. I just need a few more details to help you find the perfect job.
+    const greeting = `Hey! I've got your resume. Just need a couple quick things to find you some jobs.
 
-What type of position are you looking for? For example, "software engineer", "product manager", etc.`;
+What kind of role are you looking for? (Just something general like "engineer" or "designer" is fine)`;
 
     return res.json({
       success: true,

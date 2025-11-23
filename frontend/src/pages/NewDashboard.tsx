@@ -120,6 +120,13 @@ export default function NewDashboard() {
         if (response.state.stage === 'job_review' || response.state.stage === 'application') {
           await loadApplications(userId);
         }
+
+        // Handle pending actions automatically
+        if (response.metadata?.pendingAction) {
+          setTimeout(async () => {
+            await handlePendingAction(response.metadata.pendingAction);
+          }, 1000);
+        }
       }
     } catch (error: any) {
       console.error('Send message error:', error);
@@ -130,6 +137,57 @@ export default function NewDashboard() {
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePendingAction = async (action: string) => {
+    console.log('Handling pending action:', action);
+
+    // Send a follow-up message to trigger the pending action
+    let followUpMessage = '';
+
+    switch (action) {
+      case 'job_search':
+        followUpMessage = 'Please search for jobs now';
+        break;
+      case 'generate_cover_letters':
+        followUpMessage = 'Please generate cover letters';
+        break;
+      case 'search_contacts':
+        followUpMessage = 'Please search for contacts';
+        break;
+      default:
+        return;
+    }
+
+    if (!followUpMessage) return;
+
+    setLoading(true);
+
+    try {
+      const response = await apiClient.sendMessage(userId, followUpMessage);
+
+      if (response.success) {
+        const assistantMessage: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: response.response,
+          timestamp: new Date(),
+          metadata: response.metadata
+        };
+
+        setMessages(prev => [...prev, assistantMessage]);
+        setConversationStage(response.state.stage);
+
+        // Reload applications if needed
+        if (response.state.stage === 'job_review' || response.state.stage === 'application') {
+          await loadApplications(userId);
+        }
+      }
+    } catch (error) {
+      console.error('Pending action error:', error);
     } finally {
       setLoading(false);
     }

@@ -57,7 +57,8 @@ export interface JobApplication {
   coverLetter: string;
 
   // Application Status
-  status: 'applied' | 'interviewing' | 'rejected' | 'accepted';
+  status: 'pending' | 'applied' | 'interviewing' | 'rejected' | 'accepted';
+
   appliedAt: Date;
 
   // Networking (sub-items)

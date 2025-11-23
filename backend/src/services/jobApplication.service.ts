@@ -31,7 +31,14 @@ export class JobApplicationService {
     const jobsResult = await this.agiClient.executeAction({
       url: 'https://real-networkin.vercel.app/platform/jobs/',
       task: 'search_jobs',
-      instructions: `Search for "${profile.desiredPosition}" jobs in ${profile.locations.join(', ')}`,
+      instructions: `1. Find the job search button at the top of the page and click it ONCE
+2. Wait for the search interface to appear
+3. Find the job search input field
+4. Click on the search input field to focus it
+5. Type "${profile.desiredPosition}" into the search field
+6. Extract ALL job listings from the results. It's completely fine if only 2-3 jobs match "${profile.desiredPosition}"
+7. List each job in this format: "Job Title - Company Name - Location - Salary (if shown)"
+8. After listing all jobs, STOP immediately - do not click anything else or try to search again`,
       data: {
         position: profile.desiredPosition,
         locations: profile.locations
@@ -40,21 +47,38 @@ export class JobApplicationService {
 
     console.log(`✅ Found ${jobsResult.jobs.length} jobs`);
 
-    // Step 2: For each job, apply
+    // Step 2: Create application records (but don't apply yet - user will select which ones)
     for (const job of jobsResult.jobs) {
-      try {
-        console.log(`📝 Applying to ${job.title} at ${job.company}...`);
-        const application = await this.applyToJob(profile, job);
-        applications.push(application);
-        console.log(`✅ Applied to ${job.title}`);
-      } catch (error) {
-        console.error(`❌ Failed to apply to ${job.title}:`, error);
+      // Build description from job details
+      let description = job.description || 'Job found via search';
+      if (job.salary) {
+        description = `Salary: ${job.salary}`;
       }
+
+      const application: JobApplication = {
+        id: uuidv4(),
+        userId: profile.id,
+        jobTitle: job.title,
+        company: job.company,
+        location: job.location,
+        jobUrl: job.url || 'https://real-networkin.vercel.app/platform/jobs/',
+        jobDescription: description,
+        requirements: job.requirements || [],
+        coverLetter: '', // Will be generated when user selects this job
+        status: 'pending', // Changed from 'applied' to 'pending'
+        appliedAt: new Date(), // Will be set when actually applied
+        networkingContacts: []
+      };
+
+      await this.dataStore.saveApplication(application);
+      applications.push(application);
     }
+
+    console.log(`✅ Created ${applications.length} pending applications`);
 
     return {
       jobsFound: jobsResult.jobs.length,
-      applicationsSubmitted: applications.length,
+      applicationsSubmitted: 0, // Haven't submitted any yet
       applications
     };
   }

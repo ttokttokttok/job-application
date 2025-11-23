@@ -36,11 +36,11 @@ export default function ProfileForm() {
 
   useEffect(() => {
     const loadProfile = async () => {
-      // First check if we have an existing profile ID
-      const profileId = localStorage.getItem('profileId');
-      if (profileId) {
+      // First check if we have a userId to load the profile
+      const userId = localStorage.getItem('userId');
+      if (userId) {
         try {
-          const response = await apiClient.getProfile(profileId);
+          const response = await apiClient.getProfile(userId);
           if (response.success && response.profile) {
             setFormData({
               fullName: response.profile.fullName || '',
@@ -61,11 +61,11 @@ export default function ProfileForm() {
       }
 
       // If no existing profile, check for parsed resume data
-      const parsedResume = localStorage.getItem('parsedResume');
-      if (parsedResume) {
-        const data = JSON.parse(parsedResume);
+      const profileData = localStorage.getItem('profileData');
+      if (profileData) {
+        const data = JSON.parse(profileData);
         setFormData(prev => ({ ...prev, ...data }));
-        localStorage.removeItem('parsedResume');
+        localStorage.removeItem('profileData');
       }
     };
 
@@ -78,17 +78,17 @@ export default function ProfileForm() {
     setError(null);
 
     try {
-      const profileId = localStorage.getItem('profileId');
+      const userId = localStorage.getItem('userId');
       let response;
 
-      if (profileId) {
+      if (userId) {
         // Update existing profile
-        response = await apiClient.updateProfile(profileId, formData);
+        response = await apiClient.updateProfile(userId, formData);
       } else {
-        // Create new profile
+        // Create new profile (and generate new userId)
         response = await apiClient.createProfile(formData);
         if (response.success && response.profileId) {
-          localStorage.setItem('profileId', response.profileId);
+          localStorage.setItem('userId', response.profileId);
         }
       }
 

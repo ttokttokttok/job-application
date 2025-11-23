@@ -1433,11 +1433,12 @@ The application has been updated to implement a fully conversational, human-in-t
 
 #### Backend Services
 
-**TelnyxAgentService** (`src/services/telnyxAgent.service.ts`)
-- Integrates with Telnyx API for voice/SMS capabilities
-- Handles voice call sessions (optional feature)
-- Processes voice and SMS webhooks
-- Enables users to talk to the agent or text
+**TelnyxChatService** (`src/services/telnyxChat.service.ts`)
+- OpenAI-compatible chat completions API
+- Can use Claude, GPT-4, or other models through Telnyx
+- Supports tool/function calling
+- Optional alternative to Claude direct API
+- Future-ready for voice integration with AI Assistants
 
 **ConversationService** (`src/services/conversation.service.ts`)
 - Orchestrates the entire conversational workflow
@@ -1579,12 +1580,13 @@ The profile form is skipped, and conversation starts immediately with profile da
 - Enables async job search with real-time updates
 
 #### Telnyx Integration (Optional)
-- Telnyx API enables voice calls with the agent
-- Users can call a phone number to interact verbally
-- Voice is transcribed and processed like text messages
-- Agent can speak responses back using text-to-speech
-- SMS support for text-based mobile interaction
-- Webhooks configured for call and message events
+- **Telnyx Chat Completions API** - OpenAI-compatible chat endpoint
+- Can use Claude, GPT-4, or other models through Telnyx
+- Supports tool/function calling
+- Supports structured JSON output
+- Optionally use instead of Claude direct API
+- **Future**: Can add Telnyx AI Assistants for voice calls
+- Set `USE_TELNYX_CHAT=true` to enable
 
 #### Claude API Usage
 - **Resume Parsing**: Extract structured data from resumes
@@ -1638,8 +1640,8 @@ This ensures the user maintains full control while automating the tedious parts.
 backend/
 ├── src/
 │   ├── services/
-│   │   ├── telnyxAgent.service.ts       # NEW
-│   │   ├── conversation.service.ts      # NEW
+│   │   ├── telnyxChat.service.ts        # NEW - OpenAI-compatible chat
+│   │   ├── conversation.service.ts      # NEW - Uses Telnyx or Claude
 │   │
 │   ├── routes/
 │   │   ├── agent.routes.ts              # NEW

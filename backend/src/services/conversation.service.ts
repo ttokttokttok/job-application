@@ -4,6 +4,7 @@ import { DataStore } from '../data/store';
 import { JobApplicationService } from './jobApplication.service';
 import { NetworkingService } from './networking.service';
 import { CoverLetterService } from './coverLetter.service';
+import { TelnyxChatService } from './telnyxChat.service';
 import logger from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -13,6 +14,8 @@ import { v4 as uuidv4 } from 'uuid';
  */
 export class ConversationService {
   private claude: Anthropic;
+  private telnyx: TelnyxChatService;
+  private useTelnyx: boolean;
   private dataStore: DataStore;
   private jobService: JobApplicationService;
   private networkingService: NetworkingService;
@@ -22,10 +25,42 @@ export class ConversationService {
     this.claude = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY!
     });
+    this.telnyx = new TelnyxChatService();
+    // Use Telnyx if available, otherwise fall back to Claude
+    this.useTelnyx = this.telnyx.isAvailable() && process.env.USE_TELNYX_CHAT === 'true';
+
+    if (this.useTelnyx) {
+      logger.info('Using Telnyx Chat API for conversations');
+    } else {
+      logger.info('Using Claude API directly for conversations');
+    }
+
     this.dataStore = new DataStore();
     this.jobService = new JobApplicationService();
     this.networkingService = new NetworkingService();
     this.coverLetterService = new CoverLetterService();
+  }
+
+  /**
+   * Generate LLM response using either Telnyx or Claude
+   */
+  private async generateLLMResponse(prompt: string, maxTokens: number = 500): Promise<string> {
+    if (this.useTelnyx) {
+      // Use Telnyx Chat API
+      const result = await this.telnyx.createChatCompletion({
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens,
+      });
+      return result.content;
+    } else {
+      // Use Claude directly
+      const message = await this.claude.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      return message.content[0].text;
+    }
   }
 
   /**
@@ -127,69 +162,141 @@ export class ConversationService {
     // Use Claude to extract job preferences from conversation
     const profile = state.profileData || {};
 
-    // Check if we have all required info
-    const hasDesiredPosition = profile.desiredPosition;
-    const hasLocations = profile.locations && profile.locations.length > 0;
-    const hasCurrentLocation = profile.currentLocation;
+    // FIRST: Try to extract ALL possible information from the user's message
+    // This prevents asking for information the user already provided
+    const hasDesiredPositionBefore = profile.desiredPosition && profile.desiredPosition.trim().length > 0;
+    const hasLocationsBefore = profile.locations && profile.locations.length > 0;
+    const hasCurrentLocationBefore = profile.currentLocation && profile.currentLocation.trim().length > 0;
 
-    if (!hasDesiredPosition || !hasLocations || !hasCurrentLocation) {
-      // Ask for missing information
-      const prompt = `You are a helpful job search assistant. The user has uploaded their resume and we've extracted their profile information.
+    // Try to extract any missing information from the user's message
+    if (!hasDesiredPositionBefore || !hasLocationsBefore || !hasCurrentLocationBefore) {
+      // Build extraction prompt that tries to extract all missing fields
+      const missingFields = [];
+      if (!hasDesiredPositionBefore) missingFields.push('desiredPosition');
+      if (!hasLocationsBefore) missingFields.push('locations');
+      if (!hasCurrentLocationBefore) missingFields.push('currentLocation');
+
+      const extractionPrompt = `The user is in a conversation about job preferences. Their latest message: "${userMessage}"
+
+Conversation context:
+${conversationHistory.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
 
 Current profile data:
-${JSON.stringify(profile, null, 2)}
+- Desired position: ${profile.desiredPosition || 'NOT COLLECTED YET'}
+- Preferred job locations: ${profile.locations && profile.locations.length > 0 ? profile.locations.join(', ') : 'NOT COLLECTED YET'}
+- Current location: ${profile.currentLocation || 'NOT COLLECTED YET'}
+
+Extract any of the following that you can identify from the user's message: ${missingFields.join(', ')}.
+
+Return JSON with only the fields you can extract:
+{
+  ${!hasDesiredPositionBefore ? '"desiredPosition": "job type/role (accept broad answers like engineer, designer, manager)"' : ''}
+  ${!hasLocationsBefore ? '"locations": ["array of preferred job locations - can be cities or Remote"]' : ''}
+  ${!hasCurrentLocationBefore ? '"currentLocation": "city where they currently live"' : ''}
+}
+
+Examples:
+- "Engineer" → {"desiredPosition": "Engineer"}
+- "San Francisco" → {"locations": ["San Francisco"]} or {"currentLocation": "San Francisco"} depending on context
+- "SF and Remote" → {"locations": ["San Francisco", "Remote"]}
+
+If you cannot extract a field, do not include it in the response.`;
+
+      try {
+        const extractionResponse = await this.generateLLMResponse(extractionPrompt, 200);
+        logger.info(`Extraction response: ${extractionResponse}`);
+        const extracted = JSON.parse(extractionResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+
+        if (extracted.desiredPosition && !hasDesiredPositionBefore) {
+          profile.desiredPosition = extracted.desiredPosition;
+          logger.info(`✓ Extracted desiredPosition: ${extracted.desiredPosition}`);
+        }
+        if (extracted.locations && Array.isArray(extracted.locations) && !hasLocationsBefore) {
+          profile.locations = extracted.locations;
+          logger.info(`✓ Extracted locations: ${JSON.stringify(extracted.locations)}`);
+        }
+        if (extracted.currentLocation && !hasCurrentLocationBefore) {
+          profile.currentLocation = extracted.currentLocation;
+          logger.info(`✓ Extracted currentLocation: ${extracted.currentLocation}`);
+        }
+
+        // Save updated profile to profiles.json immediately if we extracted anything
+        if (state.userId && (extracted.desiredPosition || extracted.locations || extracted.currentLocation)) {
+          const existingProfile = await this.dataStore.getProfile(state.userId).catch(() => null);
+          const profileToSave = {
+            ...existingProfile,
+            id: state.userId,
+            fullName: profile.fullName || existingProfile?.fullName || '',
+            email: profile.email || existingProfile?.email || '',
+            phone: profile.phone || existingProfile?.phone || '',
+            workExperience: profile.workExperience || existingProfile?.workExperience || [],
+            education: profile.education || existingProfile?.education || [],
+            skills: profile.skills || existingProfile?.skills || [],
+            desiredPosition: profile.desiredPosition || existingProfile?.desiredPosition || '',
+            locations: profile.locations || existingProfile?.locations || [],
+            currentLocation: profile.currentLocation || existingProfile?.currentLocation || '',
+            createdAt: existingProfile?.createdAt || new Date(),
+            updatedAt: new Date(),
+          };
+          await this.dataStore.saveProfile(profileToSave);
+          logger.info(`Updated profile in profiles.json with new preferences`);
+        }
+      } catch (e) {
+        logger.warn('Failed to extract profile data from message:', e);
+      }
+    }
+
+    // NOW check what's still missing after extraction
+    const hasDesiredPosition = profile.desiredPosition && profile.desiredPosition.trim().length > 0;
+    const hasLocations = profile.locations && profile.locations.length > 0;
+    const hasCurrentLocation = profile.currentLocation && profile.currentLocation.trim().length > 0;
+
+    logger.info(`Profile collection status: position=${hasDesiredPosition}, locations=${hasLocations}, currentLocation=${hasCurrentLocation}`);
+    logger.info(`Profile data: ${JSON.stringify(profile)}`);
+
+    if (!hasDesiredPosition || !hasLocations || !hasCurrentLocation) {
+      // Determine what to ask for next
+      let nextQuestion = '';
+      if (!hasDesiredPosition) {
+        nextQuestion = 'desired_position';
+      } else if (!hasLocations) {
+        nextQuestion = 'locations';
+      } else if (!hasCurrentLocation) {
+        nextQuestion = 'current_location';
+      }
+
+      logger.info(`Next question to ask: ${nextQuestion}`);
+
+      // Generate response asking for what's still missing
+      const prompt = `You are a casual, friendly job search assistant. The user uploaded their resume and you're helping them find jobs.
+
+Current profile data:
+- Desired position: ${profile.desiredPosition || 'NOT COLLECTED YET'}
+- Preferred job locations: ${profile.locations && profile.locations.length > 0 ? profile.locations.join(', ') : 'NOT COLLECTED YET'}
+- Current location: ${profile.currentLocation || 'NOT COLLECTED YET'}
 
 Conversation history:
 ${conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n')}
 
 User's latest message: "${userMessage}"
 
-We need to collect three pieces of information to help with the job search:
-1. Desired position (e.g., "software engineer", "product manager")
-2. Preferred locations (can be multiple, including "Remote")
-3. Current location
+Next information we need: ${nextQuestion}
 
-Generate a natural, conversational response that:
-- Acknowledges what the user said
-- Asks for the next missing piece of information in a friendly way
-- If the user provided information in their message, extract it and ask for the next missing piece
+Generate a natural, casual response that:
+${!hasDesiredPosition ? '- Asks what kind of role they want (accept broad answers like "engineer", "designer", "manager" - no need to be specific!)' : ''}
+${hasDesiredPosition && !hasLocations ? '- Asks where they want to work (can be just a city like "SF" or "New York", or "Remote")' : ''}
+${hasDesiredPosition && hasLocations && !hasCurrentLocation ? '- Asks where they are based/living now (just the city is fine)' : ''}
+- Acknowledges what they said if relevant
+- Keep it super brief and conversational - like texting a friend
+- Accept general/broad answers and move on immediately
+- DO NOT ask follow-up questions about the role (e.g., if they say "engineer", DO NOT ask "what type of engineer?")
+- DO NOT ask about job level, seniority, or experience level - we already have that information
+- Once you have an answer for the current question, move to the next question immediately
+- If the user already provided the information in their message, acknowledge it and move to the next question
 
 Respond with ONLY the message to send to the user.`;
 
-      const message = await this.claude.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        messages: [{ role: 'user', content: prompt }]
-      });
-
-      const response = message.content[0].text;
-
-      // Try to extract information from user message
-      const extractionPrompt = `Extract job search preferences from this message: "${userMessage}"
-
-Return a JSON object with any of these fields that are mentioned:
-{
-  "desiredPosition": "string or null",
-  "locations": ["array of locations"] or null,
-  "currentLocation": "string or null"
-}
-
-Return ONLY valid JSON.`;
-
-      const extraction = await this.claude.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [{ role: 'user', content: extractionPrompt }]
-      });
-
-      try {
-        const extracted = JSON.parse(extraction.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
-        if (extracted.desiredPosition) profile.desiredPosition = extracted.desiredPosition;
-        if (extracted.locations && Array.isArray(extracted.locations)) profile.locations = extracted.locations;
-        if (extracted.currentLocation) profile.currentLocation = extracted.currentLocation;
-      } catch (e) {
-        logger.warn('Failed to extract profile data from message');
-      }
+      const response = await this.generateLLMResponse(prompt, 500);
 
       return {
         response,
@@ -198,7 +305,29 @@ Return ONLY valid JSON.`;
       };
     }
 
-    // We have all info - move to job search
+    // We have all info - save final profile and move to job search
+    logger.info(`✓ All profile data collected! Moving to job_search stage`);
+
+    // Save complete profile to profiles.json
+    const existingProfile = await this.dataStore.getProfile(state.userId).catch(() => null);
+    const completeProfile = {
+      ...existingProfile,
+      id: state.userId,
+      fullName: profile.fullName || existingProfile?.fullName || '',
+      email: profile.email || existingProfile?.email || '',
+      phone: profile.phone || existingProfile?.phone || '',
+      workExperience: profile.workExperience || existingProfile?.workExperience || [],
+      education: profile.education || existingProfile?.education || [],
+      skills: profile.skills || existingProfile?.skills || [],
+      desiredPosition: profile.desiredPosition || '',
+      locations: profile.locations || [],
+      currentLocation: profile.currentLocation || '',
+      createdAt: existingProfile?.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
+    await this.dataStore.saveProfile(completeProfile);
+    logger.info(`✓ Saved complete profile to profiles.json`);
+
     const response = `Great! I have everything I need:
 - Position: ${profile.desiredPosition}
 - Locations: ${profile.locations?.join(', ') || 'Not specified'}
@@ -223,19 +352,38 @@ Based on your background and preferences, you seem to be a great fit for ${profi
     // Trigger job search via AGI
     logger.info('Starting job search...');
 
-    // Save profile first
+    // Update profile with complete information
     const profile = state.profileData as UserProfile;
     profile.id = state.userId;
-    profile.createdAt = new Date();
+
+    // Load existing profile to preserve createdAt
+    let existingProfile;
+    try {
+      existingProfile = await this.dataStore.getProfile(state.userId);
+    } catch (e) {
+      // Profile doesn't exist yet, that's okay
+    }
+
+    if (existingProfile) {
+      profile.createdAt = existingProfile.createdAt;
+    } else {
+      profile.createdAt = new Date();
+    }
     profile.updatedAt = new Date();
+
     await this.dataStore.saveProfile(profile);
+    logger.info(`Updated profile for user ${state.userId} with job preferences`);
 
     // Search for jobs
     const result = await this.jobService.searchAndApply(state.userId);
 
-    const response = `I found ${result.jobsFound} jobs that match your profile! Here's what I found:\n\n${result.applications.map((app, i) =>
-      `${i + 1}. **${app.jobTitle}** at ${app.company}\n   Location: ${app.location}\n   Description: ${app.jobDescription.substring(0, 150)}...`
-    ).join('\n\n')}
+    const response = `I found ${result.jobsFound} jobs that match your profile! Here's what I found:\n\n${result.applications.map((app, i) => {
+      let jobInfo = `${i + 1}. **${app.jobTitle}** at ${app.company}\n   Location: ${app.location}`;
+      if (app.jobDescription && app.jobDescription.length > 0) {
+        jobInfo += `\n   ${app.jobDescription}`;
+      }
+      return jobInfo;
+    }).join('\n\n')}
 
 Which of these positions would you like to apply to? You can say "all of them", specific numbers like "1, 3, and 4", or "none" if you'd like to search for different roles.`;
 

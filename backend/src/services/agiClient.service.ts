@@ -218,12 +218,86 @@ export class AGIClient {
 
   /**
    * Extract job information from agent messages
-   * This is a placeholder - in production, you'd parse the actual message content
+   * Looks for job data in the agent's DONE messages
    */
   private extractJobsFromMessages(messages: any[]): any[] | null {
-    // Look for structured data in messages
-    // This would need to be implemented based on actual agent output format
-    return null;
+    try {
+      logger.info(`Extracting jobs from ${messages.length} messages`);
+
+      // Look through all messages for job information
+      for (const message of messages) {
+        if (message.type === 'DONE' || message.type === 'THOUGHT') {
+          const content = message.content || '';
+          logger.info(`Checking message type=${message.type}, content preview: ${content.substring(0, 200)}...`);
+
+          // Try to find JSON array or structured job data
+          const jsonMatch = content.match(/\[[\s\S]*?\]/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
+                return parsed;
+              }
+            } catch (e) {
+              // Not valid JSON, continue
+            }
+          }
+
+          // Look for job listings in text format
+          // Format: "Title - Company - Location - Salary" or "Title - Company - Location"
+          const lines = content.split('\n');
+          const jobs = [];
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+
+            // Skip empty lines and non-job lines
+            if (!trimmedLine || trimmedLine.length < 10) continue;
+            if (trimmedLine.toLowerCase().includes('task completed')) continue;
+            if (trimmedLine.toLowerCase().includes('i successfully completed')) continue;
+            if (trimmedLine.toLowerCase().includes('job title') && trimmedLine.toLowerCase().includes('company name')) continue;
+
+            // Look for lines with at least 3 dash-separated segments
+            const segments = trimmedLine.split(/\s*[-–—]\s*/);
+
+            if (segments.length >= 3) {
+              const firstSegment = segments[0].trim();
+              const secondSegment = segments[1].trim();
+              const thirdSegment = segments[2].trim();
+
+              // Validate this looks like a job listing
+              if (firstSegment && secondSegment && thirdSegment &&
+                  firstSegment.length > 3 && secondSegment.length > 1) {
+
+                const job = {
+                  title: firstSegment,
+                  company: secondSegment,
+                  location: thirdSegment,
+                  salary: segments.length >= 4 ? segments.slice(3).join(' - ').trim() : undefined,
+                  url: 'https://real-networkin.vercel.app/platform/jobs/',
+                  description: 'Job found via AGI search',
+                  requirements: []
+                };
+
+                jobs.push(job);
+                logger.info(`Found job: ${job.title} at ${job.company}`);
+              }
+            }
+          }
+
+          if (jobs.length > 0) {
+            logger.info(`✓ Extracted ${jobs.length} jobs from agent messages`);
+            return jobs;
+          }
+        }
+      }
+
+      logger.warn('Could not extract jobs from agent messages');
+      return null;
+    } catch (error) {
+      logger.error('Error extracting jobs:', error);
+      return null;
+    }
   }
 
   /**
