@@ -205,31 +205,30 @@ export class ConversationService {
 
       const extractionPrompt = `The user is in a conversation about job preferences. Their latest message: "${userMessage}"
 
-Conversation context:
-${conversationHistory.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
+Recent conversation:
+${conversationHistory.slice(-4).map(m => `${m.role}: ${m.content}`).join('\n')}
+user: ${userMessage}
 
 Current profile data:
 - Desired position: ${profile.desiredPosition || 'NOT COLLECTED YET'}
 - Preferred job locations: ${profile.locations && profile.locations.length > 0 ? profile.locations.join(', ') : 'NOT COLLECTED YET'}
 - Current location: ${profile.currentLocation || 'NOT COLLECTED YET'}
 
-Extract any of the following that you can identify from the user's message: ${missingFields.join(', ')}.
+Your task: Extract ONLY these missing fields: ${missingFields.join(', ')}
 
-IMPORTANT: Return ONLY valid JSON, no explanatory text before or after. Just the JSON object.
+${!hasDesiredPositionBefore ? 'EXTRACT desiredPosition if the user mentions what type of job they want (e.g., "engineer", "designer")' : ''}
+${!hasLocationsBefore ? 'EXTRACT locations if the user mentions cities or "remote" for WHERE THEY WANT TO WORK' : ''}
+${!hasCurrentLocationBefore ? 'EXTRACT currentLocation if the user mentions WHERE THEY CURRENTLY LIVE/ARE BASED. Note: "SF" = "San Francisco", "NYC" = "New York", etc.' : ''}
 
-Return JSON with only the fields you can extract:
-{
-  ${!hasDesiredPositionBefore ? '"desiredPosition": "job type/role (accept broad answers like engineer, designer, manager)"' : ''}
-  ${!hasLocationsBefore ? '"locations": ["array of preferred job locations - can be cities or Remote"]' : ''}
-  ${!hasCurrentLocationBefore ? '"currentLocation": "city where they currently live"' : ''}
-}
+Return ONLY valid JSON with the fields you extracted. No text before or after.
 
 Examples:
-- "Engineer" → {"desiredPosition": "Engineer"}
-- "San Francisco" → {"locations": ["San Francisco"]} or {"currentLocation": "San Francisco"} depending on context
-- "SF and Remote" → {"locations": ["San Francisco", "Remote"]}
+${!hasCurrentLocationBefore ? '- User says "SF" after being asked "where are you currently based?" → {"currentLocation": "San Francisco"}' : ''}
+${!hasCurrentLocationBefore ? '- User says "San Francisco" for current location → {"currentLocation": "San Francisco"}' : ''}
+${!hasLocationsBefore ? '- User says "SF and remote" for job locations → {"locations": ["San Francisco", "Remote"]}' : ''}
+${!hasDesiredPositionBefore ? '- User says "Engineer" → {"desiredPosition": "Engineer"}' : ''}
 
-If you cannot extract a field, do not include it in the response. Return ONLY the JSON object, nothing else.`;
+Return JSON now:`;
 
       try {
         const extractionResponse = await this.generateLLMResponse(extractionPrompt, 200);

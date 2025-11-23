@@ -126,6 +126,7 @@ export interface ConversationState {
   selectedJobs?: string[]; // Job IDs user wants to apply to
   coverLetterDrafts?: { [jobId: string]: string };
   approvedCoverLetters?: { [jobId: string]: string };
+  jobSessions?: { [jobId: string]: string }; // Map job ID to AGI session ID
   selectedContacts?: { [applicationId: string]: string[] }; // Contact IDs to reach out to
   messageDrafts?: { [contactId: string]: string };
   approvedMessages?: { [contactId: string]: string };

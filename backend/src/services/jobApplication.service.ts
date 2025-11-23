@@ -88,30 +88,14 @@ export class JobApplicationService {
 
   /**
    * Fetch detailed job information for a specific application
+   * Just returns the application - no session creation needed
    */
   async fetchJobDetails(applicationId: string): Promise<{
     application: JobApplication;
   }> {
     const application = await this.dataStore.getApplication(applicationId);
 
-    console.log(`🔍 Fetching detailed job info for: ${application.jobTitle} at ${application.company}`);
-
-    // Get detailed job information from the job page
-    const jobDetails = await this.agiClient.getJobDetails(application.jobUrl);
-
-    if (jobDetails) {
-      // Update application with detailed information
-      application.detailedDescription = jobDetails.detailedDescription;
-      application.requirements = jobDetails.requirements;
-      application.responsibilities = jobDetails.responsibilities;
-      application.skills = jobDetails.skills;
-
-      await this.dataStore.saveApplication(application);
-
-      console.log(`✅ Fetched detailed info: ${jobDetails.requirements.length} requirements, ${jobDetails.responsibilities.length} responsibilities, ${jobDetails.skills.length} skills`);
-    } else {
-      console.log('⚠️  Could not fetch detailed job info, using basic information');
-    }
+    console.log(`📋 Retrieved job details for: ${application.jobTitle} at ${application.company}`);
 
     return { application };
   }
@@ -186,6 +170,7 @@ export class JobApplicationService {
 
   /**
    * Submit application (after cover letter is approved)
+   * Creates a fresh session for each submission
    */
   async submitApplication(applicationId: string): Promise<{
     application: JobApplication;
@@ -199,38 +184,19 @@ export class JobApplicationService {
 
     console.log(`🤖 Submitting application for: ${application.jobTitle} at ${application.company}`);
 
-    // Click Easy Apply and fill form
-    await this.agiClient.executeAction({
+    // Submit with fresh session
+    await this.agiClient.submitJobApplication({
       url: application.jobUrl,
-      task: 'apply_to_job',
-      instructions: `Click the Easy Apply button and fill out the application form quickly and efficiently.
-
-INSTRUCTIONS:
-1. Find and click the "Easy Apply" or "Apply" button
-2. Fill in ALL form fields with the provided data:
-   - Full Name: Enter the fullName
-   - Email: Enter the email
-   - Phone: Enter the phone
-   - Cover Letter: Enter the coverLetter text
-3. Work quickly - don't delay between fields
-4. Click Submit/Apply to submit the application
-5. Once you see submission confirmation, STOP immediately
-
-Be efficient and accurate.`,
-      data: {
-        coverLetter: application.coverLetter,
-        fullName: profile.fullName,
-        email: profile.email,
-        phone: profile.phone
-      }
+      coverLetter: application.coverLetter,
+      fullName: profile.fullName,
+      email: profile.email,
+      phone: profile.phone
     });
 
     // Update application status to applied and save the timestamp
     application.status = 'applied';
     application.appliedAt = new Date();
 
-    // Make sure all the detailed job info is saved (in case it wasn't saved during fetch)
-    // This ensures we have the full job details in the application record
     await this.dataStore.saveApplication(application);
 
     console.log(`✅ Application submitted for: ${application.jobTitle} at ${application.company}`);

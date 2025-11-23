@@ -69,25 +69,20 @@ ${jobDetailsSection}
 
 ${candidateSection}${experienceDetails}
 
-Write a compelling, personalized cover letter (max 300 words). Focus on:
-1. Why I'm excited about this specific role and company
-2. How my skills and experience directly match their requirements and responsibilities
-3. Specific examples from my work history that demonstrate relevant capabilities
-4. Professional yet genuine tone
+Write a compelling, personalized cover letter. MAXIMUM 50 WORDS TOTAL. Focus on:
+1. Why I'm excited about this specific role
+2. My most relevant experience
+3. Professional yet genuine tone
 
-IMPORTANT:
-- Make it highly specific to THIS job - reference actual requirements, responsibilities, and skills listed
-- Use concrete examples from my work experience
-- Avoid generic phrases and clichés
-- Be authentic and show genuine enthusiasm`;
+CRITICAL: Must be exactly 50 words or less. Be concise and impactful.`;
 
     if (userFeedback) {
-      prompt += `\n\nPREVIOUS FEEDBACK FROM USER:\n${userFeedback}\n\nPlease revise the cover letter based on this feedback while maintaining all the above requirements.`;
+      prompt += `\n\nPREVIOUS FEEDBACK FROM USER:\n${userFeedback}\n\nPlease revise the cover letter based on this feedback. STILL MAXIMUM 50 WORDS.`;
     }
 
     const message = await this.claude.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
+      max_tokens: 300,
       messages: [{
         role: 'user',
         content: prompt

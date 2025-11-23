@@ -241,111 +241,88 @@ export class AGIClient {
   }
 
   /**
-   * Get detailed job information from a job page
-   * Scrapes the full job description, requirements, responsibilities, and skills
+   * Submit job application - creates fresh session for each submission
    */
-  async getJobDetails(jobUrl: string): Promise<{
-    detailedDescription: string;
-    requirements: string[];
-    responsibilities: string[];
-    skills: string[];
-  } | null> {
+  async submitJobApplication(params: {
+    url: string;
+    coverLetter: string;
+    fullName: string;
+    email: string;
+    phone: string;
+  }): Promise<void> {
     if (this.useMock) {
-      return this.mockGetJobDetails();
+      logger.info('Mock: Submitting job application');
+      return;
     }
 
+    let sessionId: string | undefined;
+
     try {
+      // Create new session
       const session = await this.agiAgentService.createSession({
         agent_name: this.agentName,
         save_on_exit: false,
       });
+      sessionId = session.session_id;
 
-      logger.info(`Created session ${session.session_id} to scrape job details from ${jobUrl}`);
+      logger.info(`Created session ${sessionId} for job application`);
 
-      try {
-        // Navigate to the job page
-        await this.agiAgentService.navigate(session.session_id, jobUrl);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      // Navigate to job page
+      await this.agiAgentService.navigate(sessionId, params.url);
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Let page load
 
-        // Send message to extract job details
-        await this.agiAgentService.sendMessage(
-          session.session_id,
-          `Extract all the key information from this job posting. I need you to identify and list:
+      // Send message to fill out and submit application
+      await this.agiAgentService.sendMessage(
+        sessionId,
+        `Fill out and submit the job application form on this page.
 
-1. **About the Job**: The full detailed description of what this job is about
-2. **Requirements**: All the required qualifications (education, experience, certifications, etc.)
-3. **Responsibilities**: The key responsibilities and duties for this role
-4. **Skills**: All technical and soft skills mentioned (programming languages, tools, methodologies, etc.)
+INSTRUCTIONS:
+1. Find and click the "Easy Apply" or "Apply" button
+2. Fill in ALL form fields:
+   - Full Name: ${params.fullName}
+   - Email: ${params.email}
+   - Phone: ${params.phone}
+   - Cover Letter: ${params.coverLetter}
+3. Click Submit/Apply button
+4. Wait for confirmation
+5. STOP after submission is confirmed
 
-Please format your response EXACTLY like this:
+The cover letter is short (50 words), input it efficiently.`,
+        params.url
+      );
 
-ABOUT THE JOB:
-[Full detailed description here]
+      // Wait for completion
+      const result = await this.agiAgentService.waitForCompletion(
+        sessionId,
+        180000, // 3 minute timeout
+        2000, // 2 second poll interval
+        (messages) => {
+          const content = messages
+            .filter(m => m.type === 'DONE' || m.type === 'THOUGHT')
+            .map(m => m.content)
+            .join('\n')
+            .toLowerCase();
 
-REQUIREMENTS:
-- [Requirement 1]
-- [Requirement 2]
-- [etc...]
+          const hasSubmitted = content.includes('submit') || content.includes('application sent');
+          const hasStopped = content.includes('stop') || content.includes('done') || content.includes('complete');
 
-RESPONSIBILITIES:
-- [Responsibility 1]
-- [Responsibility 2]
-- [etc...]
+          return hasSubmitted && hasStopped;
+        }
+      );
 
-SKILLS:
-- [Skill 1]
-- [Skill 2]
-- [etc...]
-
-Be thorough and extract ALL information you can find. After you list everything, STOP - do not click anything else.`,
-          jobUrl
-        );
-
-        // Wait for completion with content check callback
-        const result = await this.agiAgentService.waitForCompletion(
-          session.session_id,
-          180000, // 3 minute timeout
-          2000, // 2 second poll interval
-          (messages) => {
-            // Check if we have received job details in the messages
-            const content = messages
-              .filter(m => m.type === 'DONE' || m.type === 'THOUGHT')
-              .map(m => m.content)
-              .join('\n');
-
-            // Check if content contains all required sections
-            const hasAbout = /ABOUT THE JOB:/i.test(content);
-            const hasRequirements = /REQUIREMENTS:/i.test(content);
-            const hasResponsibilities = /RESPONSIBILITIES:/i.test(content);
-            const hasSkills = /SKILLS:/i.test(content);
-
-            const hasAllSections = hasAbout && hasRequirements && hasResponsibilities && hasSkills;
-            if (hasAllSections) {
-              logger.info('Job details content check passed - all sections found');
-            }
-            return hasAllSections;
-          }
-        );
-
-        // Parse the extracted information
-        const details = this.parseJobDetails(result.messages);
-
-        // Clean up session
-        await this.agiAgentService.deleteSession(session.session_id);
-
-        return details;
-      } catch (error) {
-        // Clean up session on error
+      // Clean up session
+      await this.agiAgentService.deleteSession(sessionId);
+      logger.info('Application submitted and session cleaned up');
+    } catch (error) {
+      // Clean up session on error
+      if (sessionId) {
         try {
-          await this.agiAgentService.deleteSession(session.session_id);
+          await this.agiAgentService.deleteSession(sessionId);
         } catch (cleanupError) {
           logger.error('Error cleaning up session:', cleanupError);
         }
-        throw error;
       }
-    } catch (error) {
-      logger.error('Error getting job details:', error);
-      return null;
+      throw error;
     }
   }
 
