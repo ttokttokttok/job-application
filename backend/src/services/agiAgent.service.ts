@@ -82,8 +82,8 @@ export class AGIAgentService {
       return this.mockCreateSession(options.agent_name);
     }
 
-    // Default to agi-0-fast if not specified to save Claude credits
-    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0-fast';
+    // Default to agi-0 (thinking model) if not specified for better reasoning
+    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0';
     const agentName = options.agent_name || defaultAgentName;
 
     const response = await this.axiosInstance.post<CreateSessionResponse>(
@@ -212,10 +212,12 @@ export class AGIAgentService {
     const startTime = Date.now();
     let afterId = 0;
     const allMessages: Message[] = [];
+    let lastDoneMessageTime = 0;
+    const doneMessageWaitTime = 5000; // Wait 5 seconds after last DONE message
 
     while (Date.now() - startTime < timeout) {
       const status = await this.getSessionStatus(sessionId);
-      
+
       // Get new messages
       const messagesResponse = await this.getMessages(sessionId, afterId);
       if (messagesResponse.messages && messagesResponse.messages.length > 0) {
@@ -224,9 +226,16 @@ export class AGIAgentService {
           ...messagesResponse.messages.map((m) => m.id),
           afterId
         );
+
+        // Check if we got a DONE message
+        const hasDoneMessage = messagesResponse.messages.some(m => m.type === 'DONE');
+        if (hasDoneMessage) {
+          lastDoneMessageTime = Date.now();
+          logger.info(`Received DONE message for session ${sessionId}`);
+        }
       }
 
-      // Check if completed
+      // Check if completed by session status
       if (
         status.execution_status === 'finished' ||
         status.execution_status === 'error' ||
@@ -236,6 +245,16 @@ export class AGIAgentService {
         return {
           status: status.status,
           executionStatus: status.execution_status || 'finished',
+          messages: allMessages,
+        };
+      }
+
+      // If we received a DONE message and enough time has passed, consider it complete
+      if (lastDoneMessageTime > 0 && Date.now() - lastDoneMessageTime > doneMessageWaitTime) {
+        logger.info(`Session ${sessionId} considered complete after DONE message and wait time`);
+        return {
+          status: 'completed',
+          executionStatus: 'finished',
           messages: allMessages,
         };
       }
@@ -371,7 +390,7 @@ export class AGIAgentService {
   // Mock implementations for development
   private mockCreateSession(agentName?: AgentName): CreateSessionResponse {
     const sessionId = `mock_session_${Date.now()}`;
-    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0-fast';
+    const defaultAgentName = (process.env.AGI_AGENT_NAME as AgentName) || 'agi-0';
     return {
       session_id: sessionId,
       vnc_url: `https://mock-vnc.agi.tech/${sessionId}`,

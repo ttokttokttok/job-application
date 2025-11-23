@@ -31,14 +31,17 @@ export class JobApplicationService {
     const jobsResult = await this.agiClient.executeAction({
       url: 'https://real-networkin.vercel.app/platform/jobs/',
       task: 'search_jobs',
-      instructions: `1. Find the job search button at the top of the page and click it ONCE
+      instructions: `IMPORTANT: This is a LinkedIn-like platform. The search field FILTERS existing jobs on the page - it doesn't fetch new jobs.
+
+1. Find the job search button at the top of the page and click it ONCE
 2. Wait for the search interface to appear
-3. Find the job search input field
+3. Find the job search input field (says "Search jobs by title, company, location, or skills...")
 4. Click on the search input field to focus it
-5. Type "${profile.desiredPosition}" into the search field
-6. Extract ALL job listings from the results. It's completely fine if only 2-3 jobs match "${profile.desiredPosition}"
-7. List each job in this format: "Job Title - Company Name - Location - Salary (if shown)"
-8. After listing all jobs, STOP immediately - do not click anything else or try to search again`,
+5. Type "${profile.desiredPosition}" into the search field - this FILTERS the visible jobs to show only matching ones
+6. The filtering is instant - you'll see something like "2 of 10 jobs" which is completely normal and expected
+7. Extract ONLY the job listings that remain visible after filtering (for example, if it shows 2 of 10, extract those 2)
+8. List each visible job in this format: "Job Title - Company Name - Location - Salary (if shown)"
+9. After listing the filtered jobs (even if it's just 2-3 jobs), STOP immediately - you're done, do not click anything else`,
       data: {
         position: profile.desiredPosition,
         locations: profile.locations

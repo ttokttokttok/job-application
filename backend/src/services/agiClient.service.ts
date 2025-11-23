@@ -10,9 +10,9 @@ export class AGIClient {
   constructor() {
     this.agiAgentService = new AGIAgentService();
     this.useMock = process.env.USE_MOCK_AGI === 'true';
-    // Use agi-0-fast by default for web operations to save Claude credits
+    // Use agi-0 (thinking model) by default for better reasoning capabilities
     // Can be overridden with AGI_AGENT_NAME env var
-    this.agentName = (process.env.AGI_AGENT_NAME as 'agi-0' | 'agi-0-fast') || 'agi-0-fast';
+    this.agentName = (process.env.AGI_AGENT_NAME as 'agi-0' | 'agi-0-fast') || 'agi-0';
   }
 
   /**
