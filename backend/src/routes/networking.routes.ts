@@ -8,10 +8,10 @@ const networkingService = new NetworkingService();
 const dataStore = new DataStore();
 
 /**
- * POST /api/networking/reach-out
- * Find people at company and send outreach messages
+ * POST /api/networking/search-contacts
+ * Search for people at company (without messaging)
  */
-router.post('/reach-out', async (req: Request, res: Response) => {
+router.post('/search-contacts', async (req: Request, res: Response) => {
   try {
     const { applicationId, maxContacts = 5 } = req.body;
 
@@ -22,9 +22,57 @@ router.post('/reach-out', async (req: Request, res: Response) => {
       });
     }
 
-    logger.info(`Starting networking reach-out for application: ${applicationId}`);
+    logger.info(`Searching for contacts for application: ${applicationId}`);
 
-    const contacts = await networkingService.reachOut(applicationId, maxContacts);
+    const contacts = await networkingService.searchContacts(applicationId, maxContacts);
+
+    logger.info(`Found ${contacts.length} contacts`);
+
+    return res.json({
+      success: true,
+      contacts
+    });
+  } catch (error: any) {
+    logger.error('Contact search error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to search for contacts'
+    });
+  }
+});
+
+/**
+ * POST /api/networking/reach-out
+ * Send outreach messages to selected contacts
+ */
+router.post('/reach-out', async (req: Request, res: Response) => {
+  try {
+    const { applicationId, selectedIndexes, allPeople } = req.body;
+
+    if (!applicationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'applicationId is required'
+      });
+    }
+
+    if (!selectedIndexes || !Array.isArray(selectedIndexes)) {
+      return res.status(400).json({
+        success: false,
+        error: 'selectedIndexes array is required'
+      });
+    }
+
+    if (!allPeople || !Array.isArray(allPeople)) {
+      return res.status(400).json({
+        success: false,
+        error: 'allPeople array is required (pass the people data from search-contacts)'
+      });
+    }
+
+    logger.info(`Starting networking reach-out for application: ${applicationId}, contacts: ${selectedIndexes.join(', ')}`);
+
+    const contacts = await networkingService.reachOut(applicationId, selectedIndexes, allPeople);
 
     logger.info(`Reached out to ${contacts.length} contacts`);
 

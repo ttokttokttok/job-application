@@ -122,6 +122,31 @@ export class AGIClient {
             }
             return hasSubmitted && hasStopped;
           };
+        } else if (params.task === 'filter_and_send_outreach') {
+          // For networking outreach, check if messages were sent
+          contentCheckCallback = (messages) => {
+            const content = messages
+              .filter(m => m.type === 'DONE' || m.type === 'THOUGHT')
+              .map(m => m.content)
+              .join('\n')
+              .toLowerCase();
+
+            const expectedCount = params.data?.contactCount || 1;
+
+            // Check for completion indicators
+            const hasSentMessages = content.includes('sent') || content.includes('message') || content.includes('connect');
+            const hasStopped = content.includes('stop') || content.includes('done') || content.includes('complete');
+
+            // Count how many people were contacted
+            const messageCount = (content.match(/sent|message|connect/gi) || []).length;
+            const hasEnoughMessages = messageCount >= expectedCount;
+
+            if (hasSentMessages && (hasStopped || hasEnoughMessages)) {
+              logger.info(`Networking outreach content check passed (${messageCount} messages detected, expected ${expectedCount})`);
+              return true;
+            }
+            return false;
+          };
         }
 
         // Wait for completion and collect messages
@@ -601,6 +626,15 @@ The cover letter is short (50 words), input it efficiently.`,
         return {
           status: 'completed',
           sent: true
+        };
+
+      case 'filter_and_send_outreach':
+        // Mock bulk outreach to multiple contacts
+        const contactCount = params.data?.contactCount || 1;
+        logger.info(`Mock: Sent messages to ${contactCount} contacts`);
+        return {
+          status: 'completed',
+          messagesSent: contactCount
         };
 
       case 'check_messages':

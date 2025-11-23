@@ -13,102 +13,175 @@ export class NetworkingService {
   }
 
   /**
-   * Find people at company and reach out
+   * Search for people at company (without sending messages yet)
+   * This creates a session, filters, and returns people data
+   * The session is CLOSED after this, so use searchAndStayOnPage if you plan to message them
    */
-  async reachOut(
+  async searchContacts(
     applicationId: string,
     maxContacts: number = 5
-  ): Promise<NetworkingContact[]> {
+  ): Promise<any[]> {
     const application = await this.dataStore.getApplication(applicationId);
-    const contacts: NetworkingContact[] = [];
 
     console.log(`🔍 Finding people at ${application.company}...`);
 
-    // Step 1: Navigate to people search
+    // Navigate to people search page and filter by company
     const peopleResult = await this.agiClient.executeAction({
       url: 'https://real-networkin.vercel.app/platform/search/people/',
       task: 'search_people',
-      instructions: `Filter by current company: "${application.company}". Find up to ${maxContacts} people.`,
+      instructions: `
+1. Navigate to https://real-networkin.vercel.app/platform/search/people/
+2. Click the company filter in the top middle to open the "Select companies" modal
+3. Check the box for "${application.company}"
+4. Close the modal to apply the filter
+5. Wait for the filtered results to load
+6. From the FILTERED PAGE (do NOT click into individual profiles), extract up to ${maxContacts} people visible on the page
+7. For each person, extract:
+   - name
+   - title
+   - connection degree (1st, 2nd, or 3rd)
+   - description/bio (the text under their name)
+   - their index position on the page (0-based)
+8. Return the people as a structured list
+
+IMPORTANT: Stay on the filtered search results page. Do NOT click into individual profiles.`,
       data: {
         company: application.company,
         limit: maxContacts
       }
     });
 
-    console.log(`✅ Found ${peopleResult.people.length} people`);
+    console.log(`✅ Found ${peopleResult.people?.length || 0} people`);
 
-    // Step 2: For each person, send message or connection request
-    for (const person of peopleResult.people) {
-      try {
-        console.log(`📤 Reaching out to ${person.name}...`);
-        const contact = await this.sendOutreach(application, person);
-        contacts.push(contact);
-        console.log(`✅ Sent to ${person.name}`);
-      } catch (error) {
-        console.error(`❌ Failed to reach out to ${person.name}:`, error);
+    return peopleResult.people || [];
+  }
+
+  /**
+   * Find people at company and reach out to selected contacts
+   * Does EVERYTHING in a single AGI session: filter page → message/connect selected people
+   *
+   * @param applicationId - The job application ID
+   * @param selectedPeopleIndexes - Array of indexes (0-based) of people to contact
+   * @param allPeople - The full list of people found (from searchContacts)
+   */
+  async reachOut(
+    applicationId: string,
+    selectedPeopleIndexes: number[],
+    allPeople: any[]
+  ): Promise<NetworkingContact[]> {
+    const application = await this.dataStore.getApplication(applicationId);
+    const contacts: NetworkingContact[] = [];
+
+    const selectedPeople = selectedPeopleIndexes.map(i => ({ person: allPeople[i], index: i })).filter(p => p.person);
+
+    console.log(`📤 Reaching out to ${selectedPeople.length} people from the filtered page...`);
+
+    // Build clear, step-by-step instructions
+    let instructions = `You are automating LinkedIn-style networking. Filter by company and send ${selectedPeople.length} messages.
+
+STEP 1 - FILTER THE PAGE:
+1. The page is already at https://real-networkin.vercel.app/platform/search/people/
+2. Click the company filter button in the top middle of the page
+3. In the modal that opens, check the box for "${application.company}"
+4. Close the modal
+5. Wait 2 seconds for filtered results to load
+
+STEP 2 - SEND MESSAGES (stay on the filtered page, do NOT click profiles):
+`;
+
+    for (let i = 0; i < selectedPeople.length; i++) {
+      const { person, index } = selectedPeople[i];
+      const messageText = this.generateOutreachMessage(
+        application.jobTitle,
+        application.company,
+        person.connectionDegree
+      );
+
+      if (person.connectionDegree === '1st') {
+        instructions += `
+${i + 1}. Message ${person.name}:
+   - Locate "${person.name}" on the page
+   - Click the Message button (NOT the person's name)
+   - Type: ${messageText}
+   - Click Send
+   - Wait 1 second
+
+`;
+      } else {
+        instructions += `
+${i + 1}. Connect with ${person.name}:
+   - Locate "${person.name}" on the page
+   - Click the Connect button (NOT the person's name)
+   - Click "Add a note"
+   - Type: ${messageText}
+   - Click Send
+   - Wait 1 second
+
+`;
       }
+
+      // Create contact record
+      const threadUrl = `https://real-networkin.vercel.app/platform/messaging/?thread=${person.name.toLowerCase().replace(/\s+/g, '')}`;
+      const profileUrl = `https://real-networkin.vercel.app/platform/profile/${person.name.toLowerCase().replace(/\s+/g, '')}`;
+
+      const contact: NetworkingContact = {
+        id: uuidv4(),
+        applicationId: application.id,
+        name: person.name,
+        title: person.title,
+        company: application.company,
+        connectionDegree: person.connectionDegree,
+        profileUrl: profileUrl,
+        description: person.description,
+        outreachType: person.connectionDegree === '1st' ? 'message' : 'connection_request',
+        messageText,
+        messagingThreadUrl: threadUrl,
+        status: 'pending',
+        sentAt: new Date()
+      };
+
+      contacts.push(contact);
     }
 
-    // Update application with new contacts
-    application.networkingContacts.push(...contacts);
-    await this.dataStore.saveApplication(application);
+    instructions += `
+STEP 3 - FINISH:
+Once you have sent all ${selectedPeople.length} messages, you are DONE.
+Type "DONE - Sent ${selectedPeople.length} messages" and STOP immediately.
+Do NOT navigate anywhere else. Do NOT click any other buttons.`;
+
+    // Execute EVERYTHING in a single AGI session
+    try {
+      console.log(`\n📋 AGI Instructions:\n${instructions}\n`);
+
+      await this.agiClient.executeAction({
+        url: 'https://real-networkin.vercel.app/platform/search/people/',
+        task: 'filter_and_send_outreach',
+        instructions: instructions,
+        data: {
+          company: application.company,
+          contactCount: selectedPeople.length
+        }
+      });
+
+      // Save all contacts
+      for (const contact of contacts) {
+        await this.dataStore.saveContact(contact);
+        console.log(`✅ Saved contact: ${contact.name}`);
+      }
+
+      // Update application with new contacts
+      application.networkingContacts.push(...contacts);
+      await this.dataStore.saveApplication(application);
+
+      console.log(`✅ Successfully reached out to ${contacts.length} people in one session`);
+    } catch (error) {
+      console.error(`❌ Failed to complete outreach:`, error);
+      throw error;
+    }
 
     return contacts;
   }
 
-  /**
-   * Send message or connection request to a person
-   */
-  private async sendOutreach(
-    application: JobApplication,
-    person: any
-  ): Promise<NetworkingContact> {
-    const messageText = this.generateOutreachMessage(
-      application.jobTitle,
-      application.company,
-      person.connectionDegree
-    );
-
-    if (person.connectionDegree === '1st') {
-      // Send direct message
-      await this.agiClient.executeAction({
-        url: person.profileUrl,
-        task: 'send_message',
-        instructions: 'Click Message button, type message, and send',
-        data: { message: messageText }
-      });
-    } else {
-      // Send connection request with note
-      await this.agiClient.executeAction({
-        url: person.profileUrl,
-        task: 'send_connection_request',
-        instructions: 'Click Connect, click Add Note, type message, and send',
-        data: { note: messageText }
-      });
-    }
-
-    // Create contact record
-    const threadUrl = `https://real-networkin.vercel.app/platform/messaging/?thread=${person.name.toLowerCase().replace(/\s+/g, '')}`;
-
-    const contact: NetworkingContact = {
-      id: uuidv4(),
-      applicationId: application.id,
-      name: person.name,
-      title: person.title,
-      company: application.company,
-      connectionDegree: person.connectionDegree,
-      profileUrl: person.profileUrl,
-      description: person.description,
-      outreachType: person.connectionDegree === '1st' ? 'message' : 'connection_request',
-      messageText,
-      messagingThreadUrl: threadUrl,
-      status: 'pending',
-      sentAt: new Date()
-    };
-
-    await this.dataStore.saveContact(contact);
-    return contact;
-  }
 
   /**
    * Generate personalized outreach message
@@ -118,10 +191,16 @@ export class NetworkingService {
     company: string,
     connectionDegree: string
   ): string {
+    // Clean job title - remove markdown formatting and numbering
+    const cleanTitle = jobTitle
+      .replace(/^\d+\.\s*/, '') // Remove "1. " or "2. " prefix
+      .replace(/\*\*/g, '')      // Remove ** markdown bold
+      .trim();
+
     if (connectionDegree === '1st') {
-      return `Hi! I noticed you work at ${company}. I recently applied for the ${jobTitle} role and would love to chat about your experience at the company. Would you be open to a quick coffee chat?`;
+      return `Hi! I noticed you work at ${company}. I recently applied for the ${cleanTitle} role and would love to chat about your experience at the company. Would you be open to a quick coffee chat?`;
     } else {
-      return `Hi! I'm interested in the ${jobTitle} position at ${company}. Would you be open to connecting and sharing your insights about the company?`;
+      return `Hi! I'm interested in the ${cleanTitle} position at ${company}. Would you be open to connecting and sharing your insights about the company?`;
     }
   }
 
