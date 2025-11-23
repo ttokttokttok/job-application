@@ -84,7 +84,8 @@ export class TelnyxAgentService {
         From: fromNumber,
         To: phoneNumber,
         AIAssistantDynamicVariables: {
-          job_context: `${cleanPosition} at ${jobContext.company}`
+          // job_context: `${cleanPosition} at ${jobContext.company}`
+          job_context: `hi melvin this is a call from ${jobContext.company}. I hear that you want to interview prep for the position of ${cleanPosition} at ${jobContext.company}. Would you like to get started?`
         }
       };
 
