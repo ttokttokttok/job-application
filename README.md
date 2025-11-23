@@ -426,7 +426,12 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the **MIT License with Commercial Use Restriction**.
+
+- ✅ **Non-commercial use**: Free to use, modify, and distribute
+- ⚠️ **Commercial use**: Requires explicit written permission from the copyright holder
+
+See the [LICENSE](LICENSE) file for full details. For commercial use inquiries, please open an issue or contact the maintainers.
 
 ---
 
